@@ -1,0 +1,422 @@
+
+class NewDopplerFactor : public ceres::CostFunction, SplitSpineView{
+public:
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using SO3d = Sophus::SO3<double>;
+
+  NewDopplerFactor(int64_t time_ns, const std::vector<Eigen::Vector3d>& pt_vec, 
+            const std::vector<double>& doppler_vec, const Eigen::Matrix3d& R_e_r,
+            const SplineMeta<SplineOrder>& spline_segment_meta,
+            double weight) // const Vec6d& info_vec)
+      : time_ns_(time_ns),
+        pt_vec_(pt_vec), doppler_vec_(doppler_vec),
+        spline_meta_(spline_segment_meta),
+        weight_(weight)
+        // info_vec_(info_vec) 
+        {
+          set_num_residuals(pt_vec.size());           // 定义残差值的大小(doppler速度残差)
+
+          size_t knot_num = spline_meta_.NumParameters();
+
+          // TODO: 需要提供采样曲线的多普勒速度和偏执
+          for (size_t i = 0; i < knot_num; ++i) {             
+            mutable_parameter_block_sizes()->push_back(4);    // HAO TODO:
+          }
+          for (size_t i = 0; i < knot_num; ++i) {
+            mutable_parameter_block_sizes()->push_back(3);
+          }
+
+          mutable_parameter_block_sizes()->push_back(3);  // linear bias
+
+          // mutable_parameter_block_sizes()->push_back(3);  // angular bias
+
+          // mutable_parameter_block_sizes()->push_back(1);  // time_offset 雷达时间作为系统时间,不存在时间偏移
+        }
+
+   virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+    typename SO3View::JacobianStruct J_R;
+    // typename SO3View::JacobianStruct J_rot_a;
+    typename R3View::JacobianStruct J_v;
+
+    // 解析状态参数 parameters
+    size_t knot_num = this->spline_meta_.NumParameters();               // 前 knot_num 是位置控制点 在113,120行可以计算
+    // LOG(ERROR) << "knot_num = " << knot_num << std::endl;
+    Eigen::Map<Vec3d const> linear_bias(parameters[knot_num]);          // 速度偏置
+    // Eigen::Map<Vec3d const> angular_bias(parameters[knot_num + 1]);  // 角速度偏置
+
+    // double time_offset_in_ns = parameters[Knot_offset + 2][0];
+    int64_t t_corrected = time_ns_; //  + (int64_t)time_offset_in_ns;
+
+    // double u;
+    // spline_meta_.ComputeSplineIndex(t_corrected, 0, u);
+
+    // 估计的速度
+    Eigen::Vector3d gyro_, v_inG;
+    SO3d S_ItoG;
+    if (jacobians){
+      // gyro_ = SO3View::VelocityBody(t_corrected,
+      //                               spline_meta_.segments.at(0),
+      //                               parameters + R_offset[0], &J_w);
+
+      LOG(ERROR) << std::setprecision(20) << " t_corrected = " << t_corrected << std::endl;
+
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, &J_R);
+
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, &J_v);
+    }else{
+      // gyro_ = SO3View::VelocityBody(t_corrected,
+      //                               spline_meta_.segments.at(0),
+      //                               parameters + R_offset[0], nullptr);
+
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, nullptr);
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, nullptr);
+    }
+
+    LOG(ERROR) << "Interpolation velocity = " << v_inG.transpose() << std::endl;
+
+    for (size_t i = 0; i < pt_vec_.size(); ++i) {
+      Eigen::Vector3d pt_ = pt_vec_[i];
+      double doppler_ = doppler_vec_[i];
+      residuals[i] = weight_ * (doppler_ - pt_.normalized().transpose() * S_ItoG.matrix().inverse() * (v_inG + linear_bias));
+    }
+
+    LOG(ERROR) << "Velocity residuals = " << residuals << std::endl;
+
+
+    for (size_t i = 0; i < pt_vec_.size(); ++i) {
+        const Eigen::Vector3d& pt = pt_vec_[i];
+        double doppler = doppler_vec_[i];
+
+        // 更新旋转雅可比
+        Eigen::Matrix3d jac_lhs_R = -weight_ * (v_inG + linear_bias) * pt.normalized().transpose();
+        for (size_t j = 0; j < knot_num; j++) {
+            size_t idx = j + J_R.start_idx;
+            if (jacobians[idx]) {
+                Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>> jac_kont_R(jacobians[idx]);
+                jac_kont_R.setZero();
+                jac_kont_R.block<3, 3>(0, 0) = jac_lhs_R * J_R.d_val_d_knot[j];
+                jac_kont_R = (weight_ * jac_kont_R).eval();
+            }
+        }
+
+        // 更新速度雅可比
+        Eigen::Vector3d J_v_d_ = -S_ItoG.matrix().inverse() * pt.normalized();
+        for (size_t i = knot_num; i < 2 * knot_num; ++i) {
+            size_t idx = i; // 控制点索引
+            if (jacobians[idx]) {
+                Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac_kont_p(jacobians[idx]);
+                jac_kont_p.setZero();
+                jac_kont_p = J_v_d_ * J_v.d_val_d_knot[i]; 
+                jac_kont_p = (weight_ * jac_kont_p).eval();
+            }
+        }
+
+        // 更新偏置雅可比
+        Eigen::Vector3d J_v_b_ = -S_ItoG.matrix().inverse() * pt.normalized();
+        Eigen::Map<Eigen::Matrix<double, 1, 3>> J_velocity_bias_(jacobians[2 * knot_num]);
+        J_velocity_bias_.setZero();
+        J_velocity_bias_ = J_v_b_.transpose();
+    }
+
+    LOG(ERROR) << "Evaluation Done" << std::endl;
+
+    return true;
+
+  }
+
+private:
+    int64_t time_ns_;
+    // Eigen::Vector3d pt_;
+    SplineMeta<SplineOrder> spline_meta_;
+    // Vec6d info_vec_;
+
+    //TODO: gravity is not necessary
+    // Eigen::Vector3d gravity;
+    // double doppler_;
+    double weight_;
+
+    std::vector<Eigen::Vector3d> pt_vec_;
+    std::vector<double> doppler_vec_;
+
+    // Eigen::Vector3d J_v_d_;
+    // Eigen::Vector3d J_v_b_;
+};
+
+
+class NewEventAgularFactor : public ceres::CostFunction, SplitSpineView{
+ public:
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using Quatd = Eigen::Quaterniond;
+  using SO3d = Sophus::SO3<double>;
+
+  NewEventAgularFactor(int64_t time_ns, const std::vector<cv::Point2d> pt_vec, const event_flow_velocity flow, 
+            const Eigen::Vector3d doppler_velocity,
+            const Eigen::Quaterniond & q_e_r, const Eigen::Vector3d& t_e_r,
+            const SplineMeta<SplineOrder>& spline_segment_meta, Eigen::Vector3d& angular_bias,
+            double weight) // const Vec6d& info_vec)
+      : time_ns_(time_ns),
+        pt_vec_(pt_vec), doppler_velocity_(doppler_velocity),
+        q_e_r(q_e_r), t_e_r(t_e_r),
+        spline_meta_(spline_segment_meta),
+        angular_bias(angular_bias),
+        lock_extrincs(true),      // HAO TODO: 暂时不优化外参
+        weight_(weight)
+
+    // info_vec_(info_vec) 
+    {
+      set_num_residuals(pt_vec_.size());           // 定义残差值的大小(事件角速度残差)
+
+      flow_ << flow.x, flow.y, 0;
+
+      size_t knot_num = this->spline_meta_.NumParameters();
+
+      // TODO: 需要提供采样曲线的多普勒速度和偏执                   
+      for (size_t i = 0; i < knot_num; ++i) {             
+        mutable_parameter_block_sizes()->push_back(4);   // rotation
+      }
+      for (size_t i = 0; i < knot_num; ++i) {
+        mutable_parameter_block_sizes()->push_back(3);   // position
+      }
+
+      mutable_parameter_block_sizes()->push_back(3);    // omega bias
+      
+      // if(!optition.lock_extrincs)
+
+      if(! lock_extrincs)
+      {
+        mutable_parameter_block_sizes()->push_back(4);  // q_e_r
+        mutable_parameter_block_sizes()->push_back(3);  // t_e_r
+      }
+      mutable_parameter_block_sizes()->push_back(1);  // time_offset 事件时间和雷达时间的偏移
+    }
+
+   virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+      typename SO3View::JacobianStruct J_R;
+      typename SO3View::JacobianStruct J_w;
+      typename R3View::JacobianStruct J_v;
+      
+      size_t knot_num = spline_meta_.NumParameters();
+      Eigen::Map<Vec3d const> omega_bias(parameters[knot_num]);
+
+      // Eigen::Map<Mat3d const> T_R_e_r(parameters[knot_num + 1]);
+
+      Eigen::Map<Quatd const> q_e_r(parameters[knot_num + 1]);
+      Eigen::Map<Vec3d const> T_t_e_r(parameters[knot_num + 2]);
+
+      double time_offset_in_ns = parameters[knot_num + 3][0];
+
+      int64_t t_corrected = time_ns_ + (int64_t)time_offset_in_ns;
+
+      LOG(ERROR) << "Interplate Event Flow " << std::endl;
+
+      // 估计的速度 
+      // Eigen::Vector3d gyro_, vel_, rot_accel, accel_r3;
+      Eigen::Vector3d gyro_, rot_accel, v_inG;
+      SO3d S_ItoG;
+      if (jacobians){
+        S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                        parameters, &J_R);
+
+        gyro_ = SO3View::VelocityBody(t_corrected,
+                                            spline_meta_.segments.at(0),
+                                            parameters, &J_w);
+
+        rot_accel = SO3View::accelerationBody(t_corrected,  
+                                              spline_meta_.segments.at(0), 
+                                              parameters);
+
+        v_inG = R3View::velocity(t_corrected,
+                                      spline_meta_.segments.at(0),
+                                      parameters + knot_num, &J_v);   
+
+        // accel_r3 = R3View::acceleration(t_corrected,
+        //                             spline_meta_.segments.at(0),
+        //                             parameters + knot_num, nullptr);   // &J_a
+      }else{
+        S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                        parameters, nullptr);
+                               
+        gyro_ = SO3View::VelocityBody(t_corrected,
+                                      spline_meta_.segments.at(0),
+                                      parameters, nullptr);
+
+        rot_accel = SO3View::accelerationBody(t_corrected,  
+                                      spline_meta_.segments.at(0), 
+                                      parameters);
+      
+        v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, nullptr);   
+
+        // vel_ = R3View::velocity(t_corrected,
+        //                               spline_meta_.segments.at(0),
+        //                               parameters + knot_num, nullptr);
+
+        // accel_r3 = R3View::acceleration(t_corrected,
+        //                             spline_meta_.segments.at(0),
+        //                             parameters + knot_num, nullptr);
+      }
+
+      LOG(ERROR) << "Set Jacobi Matrix " << std::endl;
+
+      // // Conversion vel
+      // Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+      // Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + angular_bias).cross(t_e_r) + doppler_velocity_); // use it add tranpose()
+      // Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + angular_bias));
+
+      
+      // Conversion vel
+      int index = 0;
+      for(auto pt_ : pt_vec_)
+      {
+        Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+        Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + angular_bias).cross(t_e_r) + S_ItoG.matrix().inverse() * v_inG); // use it add tranpose()
+        Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + angular_bias));
+
+        // 残差计算
+        residuals[index++] =  weight_ * pre_vec.transpose() * post_vec;
+
+
+        // TODO: 补充雅可比
+        if (jacobians) {
+            // [1] gyro_ 的雅可比
+            Eigen::Matrix3d J_gyro_pre_ = (Skew(pt_) * R_e_r * Skew(t_e_r));
+            Eigen::Matrix3d J_gyro_post_ = Skew(pt_) * R_e_r;
+            LOG(ERROR) << "Calculate gyro Jacobbi " << std::endl;
+
+            // [2] S_ItoG 的雅可比
+            Eigen::Matrix3d J_S_pre_ = - Skew(pt_) * R_e_r * S_ItoG.matrix().inverse() * SO3d::hat(v_inG);
+            LOG(ERROR) << "Calculate S_ItoG Jacobbi " << std::endl;
+
+            ///[step1-2] jacobians of control points
+            /// Rotation control point
+            for (size_t i = 0; i < knot_num; i++) {
+              size_t idx = i;
+              if (jacobians[idx]) {
+                Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>> jac_kont_R(
+                    jacobians[idx]);
+                jac_kont_R.setZero();
+
+                /// 1*3 3*3
+                jac_kont_R.block<1, 3>(0, 0) =
+                    ((J_gyro_pre_.transpose() * J_w.d_val_d_knot[i] * post_vec).transpose()
+                    + pre_vec.transpose() * J_gyro_post_ * J_w.d_val_d_knot[i] + (J_S_pre_.transpose() * post_vec).transpose());
+                // jac_kont_R.block<3, 3>(0, 0) += (weight_ * jac_kont_R);
+                jac_kont_R = (weight_ * jac_kont_R).eval();
+              }
+            }
+            LOG(ERROR) << "Add jacobians for Rotation control point " << std::endl;
+
+            // [3] velocity 的雅可比
+            // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_vel_(jacobians[knot_num]);
+            Eigen::Matrix3d J_vel_ = Skew(pt_) * R_e_r * S_ItoG.matrix().inverse();
+            LOG(ERROR) << "Calculate velocity Jacobbi " << std::endl;
+
+            // [3] doppler_velocity 的雅可比
+            // J_vel_ = (flow - Skew(pt_) * R_e_r * (gyro_ + angular_bias)).transpose() * Skew(pt_) * R_e_r;
+
+            /// position control point
+            for (size_t i = knot_num; i < 2 * knot_num; i++) {
+              size_t idx = i;
+              if (jacobians[idx]) {
+                Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac_kont_p(
+                    jacobians[idx]);
+                jac_kont_p.setZero();
+
+                /// 1*1 1*3
+                jac_kont_p = J_v.d_val_d_knot[i] * J_vel_.transpose() * post_vec;
+                // jac_kont_p = (weight_ * jac_kont_p).eval();
+                jac_kont_p.block(0,0,1,3) += (weight_ * jac_kont_p);
+              }
+            }
+            LOG(ERROR) << "Add jacobians for Position control point " << std::endl;
+
+            // [3] angular_bias 的雅可比
+            Eigen::Map<Eigen::Matrix<double, 1, 3>> J_angular_bias_(jacobians[2 * knot_num]);
+            J_angular_bias_.setZero();
+            J_angular_bias_ = (J_gyro_pre_.transpose() * post_vec).transpose() + pre_vec.transpose() * Skew(pt_) * R_e_r;
+
+            LOG(ERROR) << "Add jacobians for Angular Bias" << std::endl;
+
+          int t_offset_index =  2 * knot_num + 1;
+          if(! lock_extrincs)
+          {
+            Eigen::Map<Eigen::Matrix<double, 1, 3>> J_R(jacobians[2 * knot_num + 1]);
+            Eigen::Map<Eigen::Matrix<double, 1, 3>> J_t(jacobians[2 * knot_num + 2]);
+            Eigen::MatrixXd J_pre_R = - (Skew(pt_) * Skew(R_e_r * ((gyro_ + angular_bias).cross(t_e_r) + doppler_velocity_))).transpose();
+            
+            Eigen::MatrixXd J_pre_t = - (Skew(pt_) * R_e_r * Skew(gyro_ + angular_bias)).transpose();
+
+            Eigen::MatrixXd J_post_R = - (Skew(pt_) * Skew(R_e_r * ((gyro_ + angular_bias).cross(t_e_r) + doppler_velocity_)));
+
+            J_R += (J_pre_R * post_vec + pre_vec * J_post_R).transpose();
+            J_t += (J_pre_t * post_vec).transpose();
+
+            t_offset_index =  2 * knot_num + 3;
+          }
+          
+
+          // Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+          // Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + rot_accel * t_s + angular_bias).cross(t_e_r) + S_ItoG.matrix().inverse() * v_inG); // use it add tranpose()
+          // Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + rot_accel * t_s + angular_bias));
+          // residual = pre_vec.transpose() * post_vec
+          // 添加时移优化
+          if(jacobians[t_offset_index])
+          {
+            // 这个雅可比是标量
+            // Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> J_t_offset(jacobians[t_offset_index], 3);  // Assuming a 3D vector
+             
+            // J_t_offset.setZero();
+
+            double J_t_offset = ((Skew(pt_) * R_e_r * t_e_r.cross(rot_accel)).transpose() * post_vec
+                          + pre_vec.transpose() * (Skew(pt_) * R_e_r * rot_accel)).eval();
+
+            J_t_offset *= 1e-9 * weight_;
+
+            jacobians[t_offset_index][0] = J_t_offset;
+          }
+
+
+          LOG(ERROR) << "Add jacobians for J_t_offset" << std::endl;
+        } 
+      }
+
+      LOG(ERROR) << "Angular Residual = " << residuals << std::endl;
+    }
+
+private:
+    int64_t time_ns_;
+    std::vector<cv::Point2d> pt_vec_;
+    Eigen::Vector3d flow_;
+    Eigen::Vector3d doppler_velocity_;
+    Eigen::Quaterniond q_e_r;
+    Eigen::Vector3d t_e_r;
+    SplineMeta<SplineOrder> spline_meta_;
+    // Vec6d info_vec_;
+    Eigen::Vector3d angular_bias;
+    Eigen::Vector3d gravity;
+    bool lock_extrincs;
+    double weight_;
+};

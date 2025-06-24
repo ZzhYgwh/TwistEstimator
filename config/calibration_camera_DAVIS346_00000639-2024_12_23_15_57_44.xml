@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<opencv_storage>
+<DAVIS346_00000639>
+  <camera_matrix type_id="opencv-matrix">
+    <rows>3</rows>
+    <cols>3</cols>
+    <dt>d</dt>
+    <data>
+      2.8594230489422000e+02 0. 1.7982590758505410e+02 0.
+      2.8669873299583065e+02 1.3523991883050300e+02 0. 0. 1.</data></camera_matrix>
+  <distortion_coefficients type_id="opencv-matrix">
+    <rows>5</rows>
+    <cols>1</cols>
+    <dt>d</dt>
+    <data>
+      -3.9565766715630274e-01 4.1125060938322644e-01
+      1.3708211135471605e-03 -1.5213785949667465e-03
+      -6.1873673697079612e-01</data></distortion_coefficients>
+  <image_width>346</image_width>
+  <image_height>260</image_height></DAVIS346_00000639>
+<use_fisheye_model>0</use_fisheye_model>
+<type>camera</type>
+<pattern_width>8</pattern_width>
+<pattern_height>5</pattern_height>
+<pattern_type>chessboard</pattern_type>
+<board_width>9</board_width>
+<board_height>6</board_height>
+<square_size>30.</square_size>
+<calibration_error>1.2543065183075550e-01</calibration_error>
+<calibration_time>"Mon Dec 23 15:57:44 2024"</calibration_time>
+</opencv_storage>
