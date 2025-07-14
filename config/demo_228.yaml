@@ -1,0 +1,68 @@
+%YAML: 1.0
+event:
+  topic: "/dvs/events"
+  freq: 30 # hz
+  fx: 285.9423
+  fy: 286.6987
+  cx: 179.8259
+  cy: 135.2399
+  resolution: [346, 260]
+  deltaT: 1e-2 #5e-3 #5e-2 #5e-3 #5e-3 #5e-2 #1.5e-2 #5e-2 #5e-2 #5e-4 #2e-2 #5e-5
+  t1: 5e-3 #2.5e-3 #2.5e-2 #2.5e-3 #2.5e-2 #1e-2 #4e-2 #5.5e-2 #5.5e-2 #3e-4 #2.5e-2 #3e-5
+  mesh_size: 10 #same as optical flow # 3 # Please keep singular so that there are center pixels present
+  timeshift_cam_imu: 0.010493761582439365
+  show_events: true
+  k1: -0.3956577
+  k2: -0.4112506
+  p1: 0.00137082
+  p2: -0.0015214
+  k3: -0.6187367
+# -0.33419113662956684, -0.23426491013574871, 0.0013540059091016572, 0.0038993336842145015, 1.8153685917312377
+
+smooth: 0.1
+
+radar:
+  topic: "/ti_mmwave/radar_scan_pcl_0"
+  type: "ti_mmwave" # ars548
+  Extrinsics:
+    time_offset: 0.0
+    Trans: [-0.0, 0.0, 0.0]
+    Rot: [1, 0, 0,
+          0, 1, 0,
+          0, 0, 1]
+
+radar_event:
+  T_re:              # Radar to event camera external parameters
+    - [0.0,  -1.0,  0.0,  0.04077303]
+    - [0.0,   0.0,  -1.0,  -0.02330925]
+    - [1.0,  0.0,  0.0,  -0.16198989]
+    - [0.0,  0.0,  0.0,  1.0]
+
+event_extrincs:
+  topic: "/dvs/events"
+  Extrinsics:
+    time_offset: 0.0
+    Trans: [0.04077303, -0.02330925, -0.16198989]
+    Rot: [0.0286651, -0.9992392, -0.02644507,
+          -0.04739285, 0.0277848, -0.99848982,
+          0.99846494, -0.0273685, 0.04815325]
+
+# [0.0286651,  -0.04739285,  0.99846494,
+# 0.9992392,   0.0277848,  -0.0273685,
+# -0.02644507,  0.99848982,  0.04815325]
+
+
+# Estimator
+knot_distance: 0.15 # 0.3 #0.1 #0.055 #0.03     #[s]
+update_every_k_knot: 4  #[knot]
+
+
+output_file: "/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/twist_estimator.csv" 
+
+
+# twist bias model
+bias:
+  omega: [0.0, 0.0, 0.0]
+  vel: [0.0, 0.0, 0.0]
+  # omega: [1.0, 2.0, 3.0]
+  # vel: [1.0, 2.0, 3.0]

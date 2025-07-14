@@ -1,0 +1,1994 @@
+
+#pragma once
+
+#include <ceres/ceres.h>
+
+#include "spline/spline_segment.h"
+#include "utils/parameter_struct.h"
+
+#include "split_spline_view.h"
+
+#include "event_flow_detector/event_flow_detector.h"
+
+#include "DebugFile.h"
+
+#include <iomanip>  // for std::setprecision(6)
+
+#include <Eigen/Core>
+#include <Eigen/Dense>
+
+// #include "DebugFile.cpp"
+
+// #include "visual_odometry/integration_base.h"
+
+
+// 构建反对称矩阵
+// 特殊给2D 像素点使用
+Eigen::Matrix3d Skew(const cv::Point2d& vec) {
+    Eigen::Matrix3d result;
+    result << 0, -1.0, vec.y, 1.0, 0, -vec.x, -vec.y, vec.x, 0;
+    return result;
+}
+
+// 给3D Vector使用
+Eigen::Matrix3d Skew(const Eigen::Vector3d& vec) {
+    Eigen::Matrix3d skewMat;
+    skewMat <<  0,       -vec(2),  vec(1),
+                vec(2),  0,       -vec(0),
+               -vec(1),  vec(0),  0;
+    return skewMat;
+}
+
+std::string Output(const Eigen::RowVectorXd& vec) {
+    std::stringstream ss;
+    ss << "[";
+    for (int i = 0; i < vec.size(); ++i) {
+        ss << vec(i);
+        if (i < vec.size() - 1) {
+            ss << ", ";  // 在元素之间加逗号
+        }
+    }
+    ss << "]";
+    return ss.str();
+}
+
+template <typename Derived>
+std::string Output_M(const Eigen::MatrixBase<Derived>& mat) {
+// std::string Output_M(const Eigen::MatrixXd& mat) {
+    std::stringstream ss;
+    ss << "[";
+    for (int i = 0; i < mat.rows(); ++i) {
+        ss << "[";
+        for (int j = 0; j < mat.cols(); ++j) {
+            ss << mat(i, j);
+            if (j < mat.cols() - 1) {
+                ss << ", ";  // 在元素之间加逗号
+            }
+        }
+        ss << "]";
+        if (i < mat.rows() - 1) {
+            ss << ",\n ";  // 在每一行之间换行
+        }
+    }
+    ss << "]";
+    return ss.str();
+}
+
+std::string Output_double(const double& val) {
+    std::stringstream ss;
+    ss << "[";
+    // ss << std::fixed << std::setprecision(6) << val;  // 控制精度为6位小数（根据需求调整）
+    ss << val;  // 控制精度为6位小数（根据需求调整）
+    ss << "]";
+    return ss.str();
+}
+
+
+// HAO TODO: 以雷达的时间为准
+class DopplerFactor : public ceres::CostFunction, SplitSpineView{
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using SO3d = Sophus::SO3<double>;
+
+  DopplerFactor(int64_t time_ns, const Eigen::Vector3d& pt, 
+            const double& doppler, const Eigen::Matrix3d& R_e_r,
+            const SplineMeta<SplineOrder>& spline_segment_meta,
+            double weight)// const Vec6d& info_vec)
+      : time_ns_(time_ns),
+        pt_(pt), doppler_(doppler),
+        spline_meta_(spline_segment_meta),
+        weight_(weight)
+        // info_vec_(info_vec) 
+        {
+          set_num_residuals(1);           // 定义残差值的大小(doppler速度残差)
+
+          size_t knot_num = spline_meta_.NumParameters();
+
+          std::cout << "knot_num = " << knot_num << std::endl;
+
+          // TODO: 需要提供采样曲线的多普勒速度和偏执
+          for (size_t i = 0; i < knot_num; ++i) {             
+            mutable_parameter_block_sizes()->push_back(4);    // HAO TODO:
+          }
+          for (size_t i = 0; i < knot_num; ++i) {
+            mutable_parameter_block_sizes()->push_back(3);
+          }
+
+          mutable_parameter_block_sizes()->push_back(3);  // linear bias
+
+          // mutable_parameter_block_sizes()->push_back(3);  // angular bias
+
+          // mutable_parameter_block_sizes()->push_back(1);  // time_offset 雷达时间作为系统时间,不存在时间偏移
+        }
+
+   virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+    typename SO3View::JacobianStruct J_R;
+    // typename SO3View::JacobianStruct J_rot_a;
+    typename R3View::JacobianStruct J_v;
+
+    LOG(ERROR) << "Evaluate DopplerFactor " << std::endl;
+
+    // 解析状态参数 parameters
+    int knot_num = this->spline_meta_.NumParameters();               // 前 knot_num 是位置控制点 在113,120行可以计算
+
+    // LOG(ERROR) << "knot_num = " << knot_num << std::endl;
+    // LOG(ERROR) << "2 * knot_num - 1 = " << 2 * knot_num - 1 << std::endl;
+    // LOG(ERROR) << "J_velocity_rot_ = " << ((jacobians[2 * knot_num - 1] == nullptr)? "nullptr": "exist") << std::endl;
+
+    // double time_offset_in_ns = parameters[Knot_offset + 2][0];
+    int64_t t_corrected = time_ns_; //  + (int64_t)time_offset_in_ns;
+
+
+    // 估计的速度
+    Eigen::Vector3d gyro_, v_inG;
+    SO3d S_ItoG;
+    if (jacobians){
+      // gyro_ = SO3View::VelocityBody(t_corrected,
+      //                               spline_meta_.segments.at(0),
+      //                               parameters + R_offset[0], &J_w);
+
+      LOG(ERROR) << std::setprecision(20) << " t_corrected = " << t_corrected << std::endl;
+
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, &J_R);
+
+      LOG(ERROR) << "first J_R.start_idx = " <<  J_R.start_idx << std::endl;
+
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, &J_v);
+    }else{
+      // gyro_ = SO3View::VelocityBody(t_corrected,
+      //                               spline_meta_.segments.at(0),
+      //                               parameters + R_offset[0], nullptr);
+
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, nullptr);
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, nullptr);
+    }
+
+    LOG(ERROR) << "Interpolation velocity = " << Output(v_inG.transpose()) << std::endl;
+
+    // LOG(ERROR) << "Pointer to linear_bias: " << parameters[2 * knot_num] << std::endl;
+    Eigen::Map<Vec3d const> linear_bias(parameters[2 * knot_num]);          // 速度偏置
+    
+
+    // residuals[0] = weight_ * (doppler_ - pt_.normalized().transpose() * S_ItoG.matrix().inverse() * (v_inG + linear_bias).eval());
+
+    // Eigen::Vector3d corrected_velocity = v_inG + linear_bias;      // 注意这里的 linear_bias 也是定义在 
+    // double doppler_actual = pt_.normalized().transpose() * S_ItoG.matrix().inverse() * corrected_velocity;
+    // residuals[0] = doppler_ - doppler_actual;
+    // residuals[0] *= weight_;
+
+    // 1-10 TODO: 修正 偏置应该在各自的传感器上 linear_bias 应该在radar系上
+    // Eigen::Vector3d corrected_velocity = v_inG;      // 注意这里的 linear_bias 也是定义在 
+    // double doppler_actual = pt_.normalized().transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias); // 这里的I定位为雷达系,S_ItoG.matrix().inverse() * v_inG 则是雷达系的参考速度
+    // residuals[0] = doppler_ - doppler_actual;
+    // residuals[0] *= weight_;
+
+
+
+    // 1-24 check:
+    // double doppler_actual = pt_.normalized().transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias); // 这里的I定位为雷达系,S_ItoG.matrix().inverse() * v_inG 则是雷达系的参考速度
+    // residuals[0] = doppler_ - doppler_actual;
+
+    // residuals[0] = (weight_ * (doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias)));    
+    Eigen::Matrix3d temp = S_ItoG.matrix();
+    Eigen::Map<Eigen::Matrix3d> S_GtoI_map(temp.data());
+    Eigen::Matrix3d S_GtoI = S_GtoI_map.transpose();
+
+    Eigen::Vector3d v_inI_compen = (S_GtoI * v_inG + linear_bias);
+    LOG(ERROR) << "linear_bias = " << Output(linear_bias.transpose()) << std::endl;
+    LOG(ERROR) << "v_inG = " << Output(v_inG.transpose()) << std::endl;
+    LOG(ERROR) << "v_inI_compen = " << v_inI_compen << std::endl;
+    LOG(ERROR) << "doppler_ = " << doppler_ << std::endl;
+    LOG(ERROR) << "pt_.normalized().transpose() = " << Output(pt_.normalized().transpose()) << std::endl;
+    // double temp_residuals = (- pt_.normalized().transpose() * v_inI_compen).eval();
+    // double temp_residuals = (- pt_.normalized().transpose() * v_inI_compen).value();
+    double temp_residuals = (doppler_ - pt_.normalized().dot(v_inI_compen));
+
+    LOG(ERROR) << "temp_residuals = " << temp_residuals << std::endl;
+    residuals[0] = (doppler_ - pt_.normalized().dot(v_inI_compen));
+    LOG(ERROR) << "Doppler residuals = " << residuals[0] << "weight = " << weight_ << std::endl;
+    residuals[0] = weight_ * residuals[0];
+    LOG(ERROR) << "weight * Doppler residuals = " << residuals[0] << std::endl;
+
+
+    debug_ceres.Open();
+    if(!clear_debug)
+    {
+      clear_debug = true;
+      debug_ceres.Close();
+
+      debug_ceres.debug_file.open(debug_ceres.file_path, std::ios::trunc);
+      // debug_ceres.debug_file.clear();
+      debug_ceres.debug_file.close();
+
+      debug_ceres.Open();
+      debug_ceres.debug_file << "Start to Record \n";
+    }
+    debug_ceres.debug_file << std::endl;
+    debug_ceres.debug_file << "    ---------------------- Evaluate DopplerFactor ------------------    " << std::endl;
+    // LOG(ERROR) << "open debug file: " << debug_ceres.file_path << std::endl;
+    debug_ceres.debug_file << "Doppler residuals = " << std::setprecision(20) << residuals[0] << std::endl;
+    // LOG(ERROR) << "residuals done" << std::endl;
+
+
+    // debug
+    Eigen::RowVector3d pt_row_vec = pt_.transpose();
+
+    // 打印pt_row_vec
+    
+    // Output(pt_row_vec);
+
+
+    Eigen::RowVector3d linear_bias_row_vec = linear_bias.transpose(); //.eval();
+
+
+    // std::cout << "linear_bias_row_vec = " << linear_bias_row_vec << std::endl;    
+
+    // 调整一下输出格式
+    // std::cout << "Details: weight_ = " << std::setprecision(2) << weight_ << std::endl;
+    // std::cout << "Details: doppler_ =  " << std::setprecision(2) << doppler_ << std::endl;
+    // std::cout << "Details: pt_ = [ " << pt_row_vec << std::endl;
+    // std::cout << "Details: pt_.norm = [ " << pt_row_vec.normalized() << std::endl;
+    // std::cout << "Details: nS_ItoG = [ " << S_ItoG.matrix().inverse() << std::endl;
+    // std::cout << "Details: nv_inG = [ " << v_inG.transpose() << std::endl; 
+    // std::cout << "Details: nlinear_bias = [ " << linear_bias_row_vec << std::endl;   
+
+    // assert(parameters[2 * knot_num] != nullptr && "parameters[2 * knot_num] is nullptr");
+    // debug_ceres.debug_file << "Details: weight_ = " << std::setprecision(5) << weight_ 
+    
+    debug_ceres.debug_file << "Doppler Details: weight_ = " <<  weight_ << std::endl;
+    debug_ceres.debug_file << "Doppler residuals = " << std::setprecision(20) <<  residuals[0];
+    // debug_ceres.debug_file << "\n pt_row_vec = [" <<  pt_row_vec << "] ";
+    debug_ceres.debug_file << "\n pt_row_vec = [" <<  Output(pt_row_vec) << "] ";
+    debug_ceres.debug_file << "\n pt_row_vec.norm = [" <<  Output(pt_row_vec.normalized()) << "] "
+                                  << "\nS_GtoI = [" << Output_M(S_GtoI) << "] "
+                                  << "\ndoppler_ = [" << doppler_ << "] "
+                                  << "\nS_ItoG = [" << Output_M(S_ItoG.matrix()) << "] "
+                                  << "\nv_inG = [" << Output(v_inG.transpose()) << "] " 
+                                  << "\nlinear_bias = [" << Output(linear_bias_row_vec) << "] " << std::endl;
+
+    
+
+
+    // debug
+    // Eigen::RowVectorXd pt_row_vec_debug;
+    // pt_row_vec_debug.setZero();
+    // pt_row_vec_debug = pt_.transpose().eval();
+    // debug_ceres.debug_file << "pt_ = " << pt_ << ", pt_.size = " << pt_.size() << std::endl; 
+    // debug_ceres.debug_file << "pt_row_vec_debug = " << pt_row_vec_debug << std::endl;
+
+    // residual = doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias)
+
+    // 不评估雅可比就返回
+    if (!jacobians) {
+      LOG(ERROR) << "Doppler No Jacobians " << std::endl;
+      debug_ceres.debug_file << "No Jacobians" << std::endl;
+      debug_ceres.Close();
+      
+      return true;
+    }
+    else
+    {
+      LOG(ERROR) << " Calculate Jacobians " << std::endl;
+    }
+
+    debug_ceres_jacobis.Open();
+    debug_ceres_jacobis.debug_file << "Evaluate DopplerFactor Res J_R_0 J_R_1 J_R_2 J_R_3 J_p_0 J_p_1 J_p_2 J_p_3 J_linear_bias \n";
+    debug_ceres_jacobis.debug_file << residuals[0] << " ";
+
+    // 位姿雅可比
+    // Eigen::Matrix3d jac_lhs_R;
+        // residuals[0] = 
+    // (weight_ * (doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias)));
+    Eigen::Vector3d jac_lhs_R = Skew(v_inG).transpose() * S_ItoG.matrix() * pt_.normalized();
+    // jac_lhs_R = - weight_ * pt_.normalized().transpose() * S_ItoG.matrix().inverse() *  SO3::hat(v_inG + linear_bias);
+
+    // jac_lhs_R =  - weight_ * (v_inG + linear_bias) * pt_.normalized().transpose();
+
+    // jac_lhs_R =  - weight_ * (pt_.normalized().transpose().cross((v_inG + linear_bias))).transpose();
+    // jac_lhs_R = - weight_ * (pt_.normalized().cross((v_inG + linear_bias)));
+
+    // 1-10 TODO: 修正
+    // 修正的残差是
+    // pt_.normalized().transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias)
+
+    // jac_lhs_R = - weight_ * (pt_.normalized() *  S_ItoG.matrix().inverse() * v_inG);
+    // jac_lhs_R = (pt_.normalized().transpose() *  S_ItoG.matrix().inverse() *  Skew(v_inG)).transpose(); // weight_ 在下面乘了
+  
+    // 1-12 修改
+    // jac_lhs_R = (Skew(pt_.normalized()).transpose() * S_ItoG.matrix().transpose() * v_inG);
+    // jac_lhs_R += ((pt_.normalized().transpose() * S_ItoG.matrix().inverse() * Skew(v_inG)).transpose()).eval();
+    // jac_lhs_R += ((pt_.normalized().transpose() * S_ItoG.matrix().inverse() * Skew(v_inG)).transpose());
+
+    jac_lhs_R = (weight_ * jac_lhs_R);
+    // LOG(ERROR) << " jac_lhs_R = " << Output(jac_lhs_R) << std::endl;
+    debug_ceres.debug_file << "jac_lhs_R = " << Output(jac_lhs_R) << std::endl;
+    // debug_ceres.debug_file << "details = [" << jac_lhs_R.transpose() << "]\n";
+
+    // 速度雅可比 J_v_d_
+    // Eigen::Vector3d J_v_d_ = - S_ItoG.matrix().inverse() * pt_.normalized();
+    // 1-10 修改
+    // Eigen::Vector3d J_v_d_ = - S_ItoG.matrix().inverse() * pt_.normalized();  // use with transpose()
+
+    // 1-24 check:
+
+
+    // residual = doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias)
+    // - pt_.normalized().transpose() * S_ItoG.transpose() * v_inG / S_ItoG
+    // pt_.normalized().transpose() * (S_ItoG.transpose() - (S_ItoG * (I + skew(theta)).transpose()) * v_inG / theta
+    // - pt_.normalized().transpose() * (S_ItoG * skew(theta)).transpose() * v_inG / theta
+    // - pt_.normalized().transpose() * skew(theta).transpose() * S_ItoG.transpose() * v_inG / theta
+    // - (skew(theta) * pt_.normalized()).transpose() * S_ItoG.transpose() * v_inG  / theta
+    // - ( - skew(pt_.normalized()) * theta).transpose() * S_ItoG.transpose() * v_inG  / theta
+    // theta.transpose() * skew(pt_.normalized()).transpose() * S_ItoG.transpose() * v_inG  / theta.transpose() .transpose()
+    // (skew(pt_.normalized()).transpose() * S_ItoG.transpose() * v_inG).transpose()
+
+    // 偏置雅可比 J_v_b_  
+    // Eigen::Vector3d J_v_b_ = - S_ItoG.matrix().inverse() * pt_.normalized();
+
+    // 1-10 修改
+    // Eigen::Vector3d J_v_b_ = - pt_.normalized().transpose();
+    // residuals[0] = 
+    // (weight_ * (doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias)));
+    // Eigen::Vector3d J_v_b_ = - weight_ *  S_ItoG.matrix() * pt_.normalized();
+    // Eigen::Vector3d J_v_b_ = - S_ItoG.matrix().inverse() * pt_.normalized();
+    // LOG(ERROR) << "SplineOrder = " << SplineOrder << std::endl;
+
+    LOG(ERROR) << " start to calculate Rotation control points " << std::endl;
+
+    /// Rotation control point
+    Eigen::Matrix<double, 4, 4> Jac_R;
+    for (size_t i = 0; i < knot_num; i++) {
+
+      size_t idx = i + J_R.start_idx;
+      // LOG(ERROR) << " J_R.start_idx = " <<  J_R.start_idx << std::endl;
+      // LOG(ERROR) << "idx = " << idx << std::endl;
+      if (jacobians[idx]) {
+
+        // for Debug
+        // double* temp_test = jacobians[idx];
+        // for(size_t j = 0;j < 12;j++)
+        // {
+        //   LOG(ERROR) << "j = " << j << std::endl;
+        //   LOG(ERROR) << "jacobians[j] = " << temp_test[j] << std::endl;
+        // }
+      
+        Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>> jac_kont_R(
+            jacobians[idx]);
+        jac_kont_R.setZero();
+       
+        Eigen::RowVector3d jac_kont_R_pre = jac_lhs_R.transpose() * J_R.d_val_d_knot[i];
+
+        debug_ceres.debug_file << "J_R.d_val_d_knot[" << i << "] = [" <<  Output_M(J_R.d_val_d_knot[i]) << "]\n";
+
+        debug_ceres.debug_file << "J_R_pre.d_val_d_knot[" << i << "] = [" << Output(jac_kont_R_pre) << "]" << std::endl;
+        jac_kont_R.block<1, 3>(0, 0) += (weight_ * jac_kont_R_pre).eval();
+
+        LOG(ERROR) << " J_R.d_val_d_knot[ " << i << "]" << std::endl;    
+
+        Eigen::RowVectorXd jac_kont_R_copy = jac_kont_R;
+
+        LOG(ERROR) << "J_R_" << i << " = [" << Output(jac_kont_R_copy) << std::endl;
+        // debug_ceres.debug_file << "J_R_" << i << " = [" << jac_kont_R_copy.transpose() << "]\n";
+        debug_ceres.debug_file << "J_R_" << i << " = [" << Output(jac_kont_R_copy) << "]\n";
+      
+        Jac_R.block<1,4>(i, 0) = jac_kont_R_copy;
+
+        // debug_ceres_jacobis.debug_file << jac_kont_R_copy.transpose() << " ";
+        debug_ceres_jacobis.debug_file << Output(jac_kont_R_copy) << " ";
+      }
+    }
+    LOG(ERROR) << "Calculate Rotation Control Jacobbi " << std::endl;
+
+    // 检查 I:
+    debug_ceres.debug_file << "Jac_R = " << Output_M(Jac_R) << std::endl;
+
+    // LOG(ERROR) << "Jacobi for position J_v." << std::endl;
+      // for (size_t i = 0; i < knot_num; ++i) {
+      //     LOG(ERROR) << "Mat3[" << i << "] =\n" << J_v.d_val_d_knot[i] << "\n\n";
+      // }
+    Eigen::Vector3d J_v_b_;
+
+    J_v_b_ = (- weight_ * S_ItoG.matrix() * pt_.normalized());
+    debug_ceres.debug_file << "- pt_.normalized.transpose = " << Output(- pt_.normalized().transpose()) << "\n";
+    debug_ceres.debug_file << "S_ItoG = " << Output_M(S_ItoG.matrix()) << "\n";
+    // J_v_d_ += ((- pt_.normalized().transpose() * S_ItoG.matrix().inverse()).transpose()).eval();
+    // LOG(ERROR) << " J_v_d_ = " << std::endl;
+    debug_ceres.debug_file << "J_v_b_ = " << Output(J_v_b_.transpose()) << "\n";
+
+    Eigen::Matrix<double, 4, 3> Jac_p;
+    /// position control point
+    for (size_t i = knot_num; i < 2 * knot_num; i++) {
+      size_t idx = i;   // [0, knot_num - 1]
+      // LOG(ERROR) << "idx = " << idx << std::endl;
+      if (jacobians[idx]) {
+        Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac_kont_p(
+            jacobians[idx]);
+        jac_kont_p.setZero();
+        
+        double d_val_d_knot = J_v.d_val_d_knot[i - knot_num];
+        Eigen::VectorXd temp_cal;
+        // temp_cal.setZero();
+        // temp_cal = (J_v_d_ * J_v.d_val_d_knot[i - knot_num]);
+        temp_cal = (d_val_d_knot * J_v_b_);
+
+        double J_v_d_copy = J_v.d_val_d_knot[i - knot_num];
+        LOG(ERROR) << "J_v.d_val_d_knot[i - knot_num] = " << J_v_d_copy << std::endl;
+        debug_ceres.debug_file << "J_v.d_val_d_knot[" << i - knot_num << "] = " << J_v_d_copy << std::endl;
+
+
+        // debug_ceres.debug_file << "temp_cal = [" << temp_cal << "]"
+        //                        << std::endl;
+
+        // debug_ceres.debug_file << "temp_cal = [" << J_v_d_ << "] "
+        //                        << " * [" << J_v.d_val_d_knot[i - knot_num] << "]"
+        //                        << " = 1: " << (J_v_d_ * J_v.d_val_d_knot[i - knot_num])
+        //                        << "\n"
+        //                        << " = 2: " << (J_v_d_ * J_v.d_val_d_knot[i - knot_num]).eval()
+        //                        << std::endl;
+        /// 1*1 1*3
+        // jac_kont_p =  (J_v_d_ * J_v.d_val_d_knot[i - knot_num]).eval(); // TODO: i - knot_num 0-4 的范围
+        jac_kont_p =  (weight_ * J_v.d_val_d_knot[i - knot_num] * J_v_b_ ).eval(); // TODO: i - knot_num 0-4 的范围
+        // jac_kont_p = (weight_ * jac_kont_p).eval();
+
+        Eigen::RowVectorXd jac_kont_p_copy; // = jac_kont_p;
+        jac_kont_p_copy = jac_kont_p;
+        // debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << jac_kont_p_copy.transpose() << "]\n";
+
+        // LOG(ERROR) << "J_v_d_" << i - knot_num << " = \n[" << J_v_d_ << "]\n";
+        LOG(ERROR) << "J_v_b_ " << std::endl;
+        // debug_ceres.debug_file << "J_v_d_" << i - knot_num << " = [" << J_v_d_.transpose() << "]\n";
+        debug_ceres.debug_file << "J_v_b_ = [" << Output(J_v_b_.transpose()) << "]\n";
+        // debug_ceres.debug_file << "J_v_d_" << i - knot_num << " = \n[" << J_v_d_.transpose() << "]\n";
+        LOG(ERROR) << "J_v_.d_val_d_knot_" << std::endl;
+        // debug_ceres.debug_file << "J_v_.d_val_d_knot_" << i - knot_num << " = [" << (J_v.d_val_d_knot[i - knot_num]) << "]\n";
+        debug_ceres.debug_file << "J_v_.d_val_d_knot_" << i - knot_num << " = [" << (J_v_d_copy) << "]\n";
+
+        // Eigen::Matrix<double, 1, 3, Eigen::RowMajor> jac_kont_p_copy = jac_kont_p;
+        // Eigen::VectorXd jac_kont_p_copy = jac_kont_p;
+        // LOG(ERROR) << "J_p_" << i - knot_num << " = \n[" << jac_kont_p_copy << "]\n";
+        // debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << jac_kont_p_copy.transpose() << "]\n";
+        LOG(ERROR) << "J_p_" << i - knot_num << " = [" << Output(jac_kont_p_copy) << std::endl;
+        debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << Output(jac_kont_p_copy) << "]\n";
+
+        Jac_p.block<1,3>(i - knot_num, 0) = jac_kont_p_copy;
+
+        // debug_ceres_jacobis.debug_file << jac_kont_p_copy.transpose() << " ";
+        LOG(ERROR) << "jac_kont_p_copy = " << " ";
+        debug_ceres_jacobis.debug_file << Output(jac_kont_p_copy) << " ";
+      }
+    }
+
+    LOG(ERROR) << "Calculate Position Control Jacobbi " << std::endl;
+
+    // // DEBUG:
+    // LOG(ERROR) << "Parameters.size = " << this->parameter_block_sizes().size() << std::endl;
+
+    // // LOG(ERROR) << "Parameters.size = " << mutable_parameter_block_sizes().size() << std::endl;
+    // LOG(ERROR) << "Search for = " << 2 * knot_num << std::endl;
+
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Block size at index " << i << " = " << parameter_block_sizes()[i];
+    // }
+    // // 使用所有的参数块
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Parameter " << i << " = " << parameters[i][0];
+    // }
+    // LOG(ERROR) << "Parameter for last = " << parameters[8][0] 
+    // << ", " << parameters[8][1] 
+    // << ", " << parameters[8][2] << std::endl;
+
+    // for (size_t i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     if (jacobians[i] != nullptr) {
+    //         LOG(ERROR) << "Jacobian at index " << i << " is valid.";
+    //     } else {
+    //         LOG(ERROR) << "Jacobian at index " << i << " is nullptr.";
+    //     }
+    // }
+
+    // [3] velocity_bias 的雅可比
+    // residuals[0] = 
+    // (weight_ * (doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias)));    
+    // Eigen::Vector3d J_v_b_ = - weight_ * pt_.normalized();
+    Eigen::RowVectorXd J_velocity_bias_copy_;
+    Eigen::Vector3d J_v_bias_ = - weight_ * pt_.normalized();
+    if(jacobians[2 * knot_num])
+    {
+      // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_velocity_bias_(jacobians[2 * knot_num]);
+       
+      LOG(ERROR) << "J_velocity_bias_ = " << ((jacobians[2 * knot_num] == nullptr)? "nullptr": "exist") << std::endl;
+      Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> J_velocity_bias_(jacobians[2 * knot_num]);
+      // LOG(ERROR) << "J_velocity_bias_ = " << J_velocity_bias_ << std::endl;
+
+      // LOG(ERROR) << "J_velocity_rot_ after = " << ((jacobians[2 * knot_num - 1] == nullptr)? "nullptr": "exist") << std::endl;
+
+      // J_velocity_bias_.setZero();
+      // LOG(ERROR) << "J_v_b_ = " << J_v_b_.transpose() << std::endl;
+      // J_velocity_bias_ = (J_v_b_.transpose()).eval();
+      J_velocity_bias_ = (weight_ * J_v_bias_.transpose()).eval();
+      // LOG(ERROR) << "J_v_b_ = " << jacobians[2 * knot_num][0] << ", " 
+      //             << jacobians[2 * knot_num][1] << ", "
+      //             << jacobians[2 * knot_num][2] << ", "<< std::endl;
+      // LOG(ERROR) << "J_v_b_ = " << J_velocity_bias_ << std::endl;
+      // LOG(ERROR) << "J_v_b_ = " << J_velocity_bias_ << std::endl;
+
+      // Eigen::Matrix<double, 1, 3, Eigen::RowMajor> J_velocity_bias_copy_ = J_velocity_bias_;
+      J_velocity_bias_copy_ = J_velocity_bias_;
+      // LOG(ERROR) << "J_v_b_" << " = [\n" << J_velocity_bias_copy_ << "]\n";
+      LOG(ERROR) << "J_velocity_bias_copy_";
+      debug_ceres.debug_file << "J_v_bias_" << Output(J_v_bias_.transpose()) << std::endl;
+      debug_ceres.debug_file << "J_velocity_bias_ = " << Output(J_velocity_bias_) << std::endl;
+      debug_ceres_jacobis.debug_file << Output(J_velocity_bias_copy_) << "]\n";
+    }
+    else
+    {
+      LOG(ERROR) << "No Calculate Velocity Bias Jacobbi " << std::endl;
+    }
+
+    LOG(ERROR) << "No Calculate Velocity Bias Jacobbi " << std::endl;
+
+    // [4] timeoffset 本身无偏置,因此不用加入
+    // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_timeoffset_(jacobians[knot_num + 2]);
+    // J_timeoffset_.setZero();
+    // J_timeoffset_ = J_v_b_;    
+
+    LOG(ERROR) << "DopplerFactor Evaluation Done" << std::endl;
+
+    LOG(ERROR) << "All Jacobi for Doppler factor" << std::endl;
+    debug_ceres.debug_file << "All Jacobi for Doppler factor " << std::endl;
+    debug_ceres.debug_file << "Jac_R_ = " << Output_M(Jac_R) << std::endl;
+    debug_ceres.debug_file << "J_p_ = " << Output_M(Jac_p) << std::endl;
+    debug_ceres.debug_file << "J_velocity_bias_ = " << Output(J_velocity_bias_copy_) << std::endl;
+
+    debug_ceres.debug_file << std::endl;
+    debug_ceres.Close();
+    debug_ceres_jacobis.Close();
+
+    LOG(ERROR) << "print close" << std::endl;
+
+    return true;
+  }
+
+private:
+    int64_t time_ns_;
+    Eigen::Vector3d pt_;
+    SplineMeta<SplineOrder> spline_meta_;
+    // Vec6d info_vec_;
+
+    //TODO: gravity is not necessary
+    // Eigen::Vector3d gravity;
+    double doppler_;
+    double weight_;
+
+    // Eigen::Vector3d J_v_d_;
+    // Eigen::Vector3d J_v_b_;
+};
+
+
+
+class EventAgularFactor : public ceres::CostFunction, SplitSpineView{
+ public:
+ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using Quatd = Eigen::Quaterniond;
+  using SO3d = Sophus::SO3<double>;
+
+  // EventAgularFactor(int64_t time_ns, const cv::Point2d pt, const event_flow_velocity flow, 
+  //           const Eigen::Vector3d doppler_velocity,
+  //           // const Eigen::Quaterniond & q_e_r, const Eigen::Vector3d& t_e_r,
+  //           const Eigen::Quaterniond q_e_r, const Eigen::Vector3d t_e_r,
+  //           const SplineMeta<SplineOrder>& spline_segment_meta,
+  //           double weight) // const Vec6d& info_vec)
+  EventAgularFactor(int64_t time_ns, const Eigen::Vector3d pt, const event_flow_velocity flow, 
+            const Eigen::Vector3d doppler_velocity,
+            // const Eigen::Quaterniond & q_e_r, const Eigen::Vector3d& t_e_r,
+            const Eigen::Quaterniond q_e_r, const Eigen::Vector3d t_e_r,
+            const SplineMeta<SplineOrder>& spline_segment_meta,
+            double weight) // const Vec6d& info_vec)
+      : time_ns_(time_ns),
+        pt_(pt), doppler_velocity_(doppler_velocity),
+        q_e_r(q_e_r), t_e_r(t_e_r),
+        spline_meta_(spline_segment_meta),
+        lock_extrincs(true),      // HAO TODO: 暂时不优化外参
+        weight_(weight)
+
+    // info_vec_(info_vec) 
+    {
+      set_num_residuals(3);           // 定义残差值的大小(事件角速度残差)
+
+      flow_ << flow.x, flow.y, 0;
+
+      size_t knot_num = this->spline_meta_.NumParameters();
+      // LOG(ERROR) << "knot_num = " << knot_num << std::endl;
+
+      // TODO: 需要提供采样曲线的多普勒速度和偏执                   
+      for (size_t i = 0; i < knot_num; ++i) {             
+        mutable_parameter_block_sizes()->push_back(4);   // rotation
+      }
+      for (size_t i = 0; i < knot_num; ++i) {
+        mutable_parameter_block_sizes()->push_back(3);   // position
+      }
+      mutable_parameter_block_sizes()->push_back(3);    // linear bias // 1 -11 修改
+      mutable_parameter_block_sizes()->push_back(3);    // omega bias
+      
+      // if(!optition.lock_extrincs)
+      LOG(ERROR) << "lock extrincs? " << ((lock_extrincs)? "True": "False");
+      if(! lock_extrincs)
+      {
+        mutable_parameter_block_sizes()->push_back(4);  // q_e_r
+        mutable_parameter_block_sizes()->push_back(3);  // t_e_r
+      }
+      mutable_parameter_block_sizes()->push_back(1);  // time_offset 事件时间和雷达时间的偏移
+    }
+
+   virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+      typename SO3View::JacobianStruct J_R;
+      typename SO3View::JacobianStruct J_w;
+      typename R3View::JacobianStruct J_v;
+
+      LOG(ERROR) << "Evaluate EventAgularFactor " << std::endl;
+
+      debug_ceres.Open();
+
+
+      debug_ceres.debug_file << std::endl;
+      debug_ceres.debug_file << "    ---------------------- Evaluate EventAgularFactor ------------------    " << std::endl;
+
+
+      debug_ceres.debug_file << "Evaluate EventAgularFactor \n";
+
+      size_t knot_num = spline_meta_.NumParameters();
+      // Eigen::Map<Vec3d const> omega_bias(parameters[2 * knot_num]);
+
+      // 1-11修改
+      Eigen::Map<Vec3d const> linear_bias(parameters[2 * knot_num]);
+      Eigen::Map<Vec3d const> omega_bias(parameters[2 * knot_num + 1]);
+      int t_offset_index = 2 * knot_num + 2;
+
+      // Eigen::Map<Mat3d const> T_R_e_r(parameters[knot_num + 1]);
+      // HAO TODO: 修改
+      // int t_offset_index = 2 * knot_num + 1;
+      if(! lock_extrincs)
+      {
+        Eigen::Map<Quatd const> T_q_e_r(parameters[2 * knot_num + 2]);
+        Eigen::Map<Vec3d const> T_t_e_r(parameters[2 * knot_num + 3]);
+        t_offset_index = 2 * knot_num + 4;
+      }
+
+      double time_offset_in_ns = parameters[t_offset_index][0];
+
+      LOG(ERROR) << "Correct time: " << time_offset_in_ns << std::endl;
+      LOG(ERROR) << "Max Time: " << spline_meta_.segments.at(0).MaxTimeNs() << std::endl;
+      LOG(ERROR) << "Min Time: " << spline_meta_.segments.at(0).MinTimeNs() << std::endl;
+      
+
+      int64_t t_corrected = time_ns_ + (int64_t)time_offset_in_ns;
+
+      t_corrected = std::min(t_corrected, spline_meta_.segments.at(0).MaxTimeNs() - 1);
+      t_corrected = std::max(t_corrected, spline_meta_.segments.at(0).MinTimeNs() + 1);
+
+      LOG(ERROR) << "Interplate Event Flow " << std::endl;
+
+      // 估计的速度 
+      // Eigen::Vector3d gyro_, vel_, rot_accel, accel_r3;
+      Eigen::Vector3d gyro_, rot_accel, v_inG;
+      SO3d S_ItoG;
+      if (jacobians){
+        S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                        parameters, &J_R);
+
+        gyro_ = SO3View::VelocityBody(t_corrected,
+                                            spline_meta_.segments.at(0),
+                                            parameters, &J_w);
+
+        rot_accel = SO3View::accelerationBody(t_corrected,  
+                                              spline_meta_.segments.at(0), 
+                                              parameters);
+
+        v_inG = R3View::velocity(t_corrected,
+                                      spline_meta_.segments.at(0),
+                                      parameters + knot_num, &J_v);   
+
+        // accel_r3 = R3View::acceleration(t_corrected,
+        //                             spline_meta_.segments.at(0),
+        //                             parameters + knot_num, nullptr);   // &J_a
+      }else{
+        S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                        parameters, nullptr);
+                               
+        gyro_ = SO3View::VelocityBody(t_corrected,
+                                      spline_meta_.segments.at(0),
+                                      parameters, nullptr);
+
+        rot_accel = SO3View::accelerationBody(t_corrected,  
+                                      spline_meta_.segments.at(0), 
+                                      parameters);
+      
+        v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, nullptr);   
+
+        // vel_ = R3View::velocity(t_corrected,
+        //                               spline_meta_.segments.at(0),
+        //                               parameters + knot_num, nullptr);
+
+        // accel_r3 = R3View::acceleration(t_corrected,
+        //                             spline_meta_.segments.at(0),
+        //                             parameters + knot_num, nullptr);
+      }
+
+      LOG(ERROR) << "Set Jacobi Matrix " << std::endl;
+
+      // // Conversion vel
+      // Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+      // Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + angular_bias).cross(t_e_r) + doppler_velocity_); // use it add tranpose()
+      // Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + angular_bias));
+
+      
+      // Conversion vel
+      Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+      // Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + omega_bias).cross(t_e_r) + S_ItoG.matrix().inverse() * v_inG); // use it add tranpose()
+      // Eigen::Vector3d post_vec = (flow_ + Skew(pt_) * R_e_r * (gyro_ + omega_bias));
+
+      // 1-11 修改
+      // Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r.transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias - gyro_.cross( - R_e_r.transpose() * t_e_r)); // use it add tranpose()
+      // Eigen::Vector3d post_vec = flow_ + Skew(pt_) * (R_e_r.transpose() * gyro_ + omega_bias); // TODO: omega_bias is in event
+      
+      // T_e_r.inv = [R_e_r.transpose()   -R_e_r.transpose() * t_e_r
+      //                                    1    ]
+
+      // R_e_r
+
+      debug_ceres.debug_file << "R_e_r = "  << Output_M(R_e_r) << std::endl;
+      debug_ceres.debug_file << "t_e_r = "  << Output_M(t_e_r) << std::endl;
+
+      Eigen::Matrix4d T_e_r;
+      T_e_r.setZero();
+      T_e_r.block<3,3>(0,0) = R_e_r;
+      T_e_r.block<3,1>(0,3) = t_e_r;
+
+      debug_ceres.debug_file << "T_e_r.invese() = "  << Output_M(T_e_r) << std::endl;
+      debug_ceres.debug_file << "T_e_r.invese() = "  << Output_M(T_e_r.inverse()) << std::endl;
+
+      // 1-13 修改
+      Eigen::Vector3d t_r_e_large_0 =  R_e_r.transpose() * t_e_r;
+      LOG(ERROR) << "Test t_r_e_large_0 = " << Output(t_r_e_large_0.transpose()) << std::endl;
+      Eigen::Vector3d t_r_e = -1.0 * t_r_e_large_0;
+      LOG(ERROR) << "Test t_r_e = " << std::endl;
+      LOG(ERROR) << "Test t_r_e = " << Output(t_r_e.transpose()) << std::endl;
+
+      Eigen::Matrix4d T_r_e;
+      T_r_e.setZero();
+      T_r_e.block<3,3>(0,0) = R_e_r.transpose().eval();
+      T_r_e.block<3,1>(0,3) = t_r_e;
+
+      debug_ceres.debug_file << "check T_e_r.invese() = " << Output_M(T_r_e) << std::endl;
+
+      Eigen::Vector3d pixel_cord = pt_;
+      // Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * (S_ItoG.matrix().inverse() * v_inG + linear_bias) - gyro_.cross(t_r_e));
+      // Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias) + gyro_.cross(t_r_e));
+      
+      // 1-24 修改
+      // use for transpose()
+      Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((S_ItoG.matrix().transpose() * v_inG + linear_bias) 
+                                  + (gyro_ + R_e_r * omega_bias).cross(t_r_e)));
+
+      // 1-24 未修改
+      // Eigen::Vector3d post_vec = flow_ + Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias); // TODO: omega_bias is in event
+
+      // 3-18 修改 法向光流的计算
+      Eigen::Vector3d grad;
+      grad << -1.0 / flow_(0), -1.0 / flow_(1), 0.0;
+      double normal_norm = 1.0 / grad.norm();
+      Eigen::Vector3d normal_flow = grad * normal_norm;
+
+      // Eigen::Vector3d 
+      double post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias);
+      
+      
+      debug_ceres.debug_file << "pre_vec = " << Output(pre_vec.transpose()) << std::endl;
+      debug_ceres.debug_file << "post_vec = " << post_vec << std::endl;
+
+      // debug_ceres.debug_file << "post_vec = " << Output((pre_vec * post_vec).transpose()) << std::endl;
+
+      // debug_ceres.debug_file << "residuals address: " << static_cast<void*>(residuals) << std::endl;
+
+      Eigen::Vector3d residual_temp = pre_vec * post_vec;
+
+      // 残差计算
+      // residuals[0] =  weight_ * pre_vec.transpose() * post_vec;   // 1 * 3
+      // residuals[0] = (weight_ * pre_vec.transpose() * post_vec);   // 1 * 3
+      Eigen::Map<Eigen::Vector3d> residual(residuals);
+      residual.setZero();
+      // residuals[0] = (weight_ * pre_vec.transpose() * post_vec); // 1 * 3
+      // residual = pre_vec * post_vec;
+      residual = residual_temp;
+      debug_ceres.debug_file << "event residuals 1 = " << Output(residual.transpose()) << std::endl;
+      residual = (weight_ * residual).eval();
+
+      // debug_ceres.debug_file << "residuals = " << std::setprecision(5) << residuals[0] << std::endl;
+      // debug_ceres.debug_file << "residuals = " << residuals[0] << std::endl;
+      // debug_ceres.debug_file << "event residuals = " << residuals[0] << std::endl;
+      debug_ceres.debug_file << "event residuals = " << Output(residual) << std::endl;
+
+      // 技术问题,Eigen无法赋值,手动处理
+      residual[0] = residual(0);
+      residual[1] = residual(1);
+      residual[2] = residual(2);
+      
+      debug_ceres.debug_file << "event residuals origin = " << residuals[0] << ", " << residuals[1] << ", " << residuals[2] << std::endl;
+      LOG(ERROR) << "residuals done" << std::endl;
+
+
+      // Eigen::RowVectorXd pt_row_vec = pt_.transpose();
+      // Eigen::RowVectorXd gyro_row_vec = gyro_.transpose();
+      // Eigen::RowVectorXd omega_bias_row_vec = omega_bias.transpose();
+      Eigen::RowVector3d omega_bias_row_vec = omega_bias.transpose();
+      // LOG(ERROR) << "A" << std::endl;
+      // Eigen::RowVectorXd t_e_r_row_vec = t_e_r.transpose();
+      Eigen::RowVector3d t_e_r_row_vec = t_e_r.transpose();
+      // LOG(ERROR) << "B" << std::endl;
+      // debug_ceres.debug_file << "Details: weight_ = " << std::setprecision(5) << weight_ 
+      //                               << "\n Skew(pt_) = [" <<  Skew(pt_) << "] "
+      //                               << "\n R_e_r = [" <<  R_e_r << "] "
+      //                               << "\n gyro_ = [" <<  gyro_.transpose() << "] "
+      //                               << "\n omega_bias = [" <<  omega_bias_row_vec << "] "
+      //                               << "\n t_e_r = [" <<  t_e_r.transpose() << "] "
+      //                               << "\nS_ItoG = [" << S_ItoG.matrix().inverse() << "] "
+      //                               << "\nv_inG = [" << v_inG.transpose() << "] " << std::endl;
+      // LOG(ERROR) << "start to output" << std::endl;
+      // LOG(ERROR) << "Details: weight_ = " << std::setprecision(5) << weight_<< std::endl;
+      // LOG(ERROR) << "Skew(pt_) = [" << std::setprecision(3) << Skew(pt_) << "] "<< std::endl;
+      // LOG(ERROR) << "R_e_r = [" << std::setprecision(6) << R_e_r << "] "<< std::endl;
+      // LOG(ERROR) << "gyro_ = [" << std::setprecision(4) << gyro_.transpose() << "] "<< std::endl;
+      // LOG(ERROR) << "omega_bias = [" << std::setprecision(4) << omega_bias_row_vec << "] "<< std::endl;
+      // LOG(ERROR) << "t_e_r = [" << std::setprecision(2) << t_e_r_row_vec << "] "<< std::endl;
+      // LOG(ERROR) << "S_ItoG = [" << std::setprecision(3) << S_ItoG.matrix().inverse() << "] "<< std::endl;
+      // LOG(ERROR) << "v_inG = [" << std::setprecision(4) << v_inG.transpose() << "] " << std::endl;
+
+      //Eigen::Vector3d pre_vec = 
+      // Skew(pixel_cord) * (R_e_r.transpose() * ((S_ItoG.matrix().transpose() * v_inG + linear_bias) + (gyro_ + R_e_r * omega_bias).cross(t_r_e)));
+      // double post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias);
+
+      debug_ceres.debug_file << "Event Details: weight_ = " << weight_ 
+                                    << "\n pt_ = [" <<  Output(pixel_cord) << "] "
+                                    << "\n Skew(pt_) = [" <<  Output_M(Skew(pixel_cord)) << "] "
+                                    << "\n grad = [" <<  Output(grad) << "] "
+                                    << "\n normal_norm = [" << normal_norm << "] "
+                                    << "\n normal_flow = [" <<  Output(normal_flow) << "] "
+                                    << "\n R_e_r = [" <<  Output_M(R_e_r) << "] "          
+                                    // << "\n gyro_ = [" <<  gyro_.transpose() << "] "
+                                    << "\n gyro_ = [" <<  Output(gyro_.transpose()) << "] "
+                                    << "\n linear_bias = [" <<  Output(linear_bias) << "] "
+                                    << "\n omega_bias = [" <<  Output(omega_bias_row_vec) << "] "
+                                    << "\n t_e_r = [" <<  Output(t_e_r) << "] "
+                                    << "\n t_r_e = [" <<  Output(t_r_e) << "] "
+                                    << "\nS_ItoG = [" << Output_M(S_ItoG.matrix()) << "] "
+                                    << "\nS_GtoI = [" << Output_M(S_ItoG.matrix().inverse()) << "] "
+                                    << "\nv_inG = [" << Output(v_inG.transpose()) << "] " << std::endl;
+
+      // debug_ceres.debug_file << "pre_vec = " <<  pre_vec.transpose() << std::endl;
+      // debug_ceres.debug_file << "post_vec = " <<  post_vec.transpose() << std::endl;
+
+      Eigen::Vector3d residuals_copy = residual;
+      // LOG(ERROR) << "Angular Residual = " << residuals[0] << std::endl;
+      LOG(ERROR) << "Angular Residual = " << Output(residuals_copy.transpose()) << std::endl;
+
+      
+
+      // 不评估雅可比就返回
+      if (!jacobians) {
+        LOG(ERROR) << "EventAgularFactor No Jacobi!" << std::endl;
+        debug_ceres.Close();
+
+        // debug_ceres_jacobis.Close();
+        return true;
+      }
+
+      debug_ceres_jacobis.Open();
+      debug_ceres_jacobis.debug_file << "Evaluate EventAgularFactor Res J_R_0 J_R_1 J_R_2 J_R_3 J_p_0 J_p_1 J_p_2 J_p_3 J_linear_bias J_angular_bias J_t \n";
+      debug_ceres_jacobis.debug_file << Output(residuals_copy.transpose()) << " ";
+
+      // TODO: 补充雅可比
+      // if (jacobians) {
+          // [1] gyro_ 的雅可比
+          // Eigen::Matrix3d J_gyro_pre_ = (Skew(pt_) * R_e_r * Skew(t_e_r));
+          // Eigen::Matrix3d J_gyro_post_ = Skew(pt_) * R_e_r;
+          // 1-11 修改
+          // Eigen::Matrix3d J_gyro_pre_ = (Skew(pt_) * R_e_r * Skew(- R_e_r.transpose() * t_e_r)); ///use for transpose()
+          // Eigen::Matrix3d J_gyro_post_ = Skew(pt_) * R_e_r;
+
+        // 1-13 修改
+        // Eigen::Matrix3d J_gyro_pre_ = (Skew(pt_) * Skew(- R_e_r.transpose() * t_e_r)); ///use for transpose()
+          //  Eigen::Matrix3d J_gyro_pre_ = (Skew(pixel_cord) * Skew(t_r_e)); ///use for transpose()
+
+          // // 1-24 修改
+          // Eigen::Matrix3d J_gyro_pre_ =  - Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e); ///use for transpose()
+
+          // Eigen::Matrix3d J_gyro_post_ = Skew(pixel_cord) * R_e_r.transpose();
+
+          // 3-18 修改
+          Eigen::Matrix3d J_gyro_pre_ =  - Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e); ///use for transpose()
+          Eigen::RowVector3d J_gyro_post_ = normal_flow.transpose() * Skew(pixel_cord) * R_e_r.transpose();
+
+          LOG(ERROR) << "Calculate gyro Jacobbi " << std::endl;
+
+          debug_ceres.debug_file << "J_gyro_pre_ = " <<  Output_M(J_gyro_pre_) << std::endl;
+          debug_ceres.debug_file << "J_gyro_post_ = " <<  Output(J_gyro_post_) << std::endl;
+
+          // [2] S_ItoG 的雅可比
+          // Eigen::Matrix3d J_S_pre_ = - Skew(pt_) * R_e_r * S_ItoG.matrix().inverse() * SO3d::hat(v_inG);
+          // 1-11 修改
+          // Eigen::Matrix3d J_S_pre_ = - Skew(pixel_cord) * R_e_r.transpose() * S_ItoG.matrix().inverse() * SO3d::hat(v_inG);
+
+          // 1-24 修改
+          Eigen::Matrix3d J_S_pre_ = - Skew(pixel_cord) * R_e_r.transpose() * S_ItoG.matrix().transpose() * Skew(v_inG);
+
+          debug_ceres.debug_file << "J_S_pre_ = " <<  Output_M(J_S_pre_) << std::endl;
+
+          LOG(ERROR) << "Calculate S_ItoG Jacobbi " << std::endl;
+
+          ///[step1-2] jacobians of control points
+          /// Rotation control point
+          // Eigen::Matrix4d Jac_R;
+          Eigen::Matrix<double, 12, 4> Jac_R;
+          for (size_t i = 0; i < knot_num; i++) {
+            size_t idx = i;
+            if (jacobians[idx]) {
+              Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>> jac_kont_R(
+                  jacobians[idx]);
+              jac_kont_R.setZero();
+                    
+              /// 1*3 3*3
+              // jac_kont_R.block<1, 3>(0, 0) =
+              //     (J_gyro_pre_.transpose() * J_w.d_val_d_knot[i] * post_vec).transpose()
+              //     + pre_vec.transpose() * J_gyro_post_ * J_w.d_val_d_knot[i] + (J_S_pre_.transpose() * post_vec).transpose();
+              // jac_kont_R = (weight_ * jac_kont_R).eval();
+
+              // 1-24 修改
+              // jac_kont_R.block<3, 3>(0, 0) =
+              //     ((J_gyro_pre_ * J_w.d_val_d_knot[i]).transpose() * post_vec).transpose()
+              //     + pre_vec.transpose() * J_gyro_post_ * J_w.d_val_d_knot[i] + ((J_S_pre_ * J_R.d_val_d_knot[i]).transpose() * post_vec).transpose();
+              
+              // 3-8 修改
+              // jac_kont_R.block<3, 3>(0, 0) =
+              //     ((J_gyro_pre_.transpose() * J_w.d_val_d_knot[i]).transpose() * post_vec) //.transpose()
+              //     + pre_vec * J_gyro_post_ * J_w.d_val_d_knot[i] + ((J_S_pre_ * J_R.d_val_d_knot[i]).transpose() * post_vec).transpose(); 
+              // HAO TODO: 检查上面的计算顺序
+              jac_kont_R.block<3, 3>(0, 0) =
+                  ((J_gyro_pre_ * J_w.d_val_d_knot[i]).transpose() * post_vec) //.transpose()
+                  + pre_vec.transpose() * J_gyro_post_.transpose() * J_w.d_val_d_knot[i] 
+                  + ((J_S_pre_ * J_R.d_val_d_knot[i]).transpose() * post_vec); 
+
+
+              jac_kont_R = (weight_ * jac_kont_R).eval();              
+
+              // Eigen::RowVector4d jac_kont_R_copy = jac_kont_R;
+              Eigen::Matrix<double, 3, 4> jac_kont_R_copy = jac_kont_R;
+              debug_ceres.debug_file << "J_R.d_val_d_knot[" << i << "] = [" << Output_M(J_R.d_val_d_knot[i]) << "]\n";
+              debug_ceres.debug_file << "J_w.d_val_d_knot[" << i << "] = [" << Output_M(J_w.d_val_d_knot[i]) << "]\n";
+              debug_ceres.debug_file << "jac_lhs_R_" << i << " = [" << Output_M(jac_kont_R_copy) << "]\n";
+
+              Jac_R.block<3,4>(3 * i, 0) = jac_kont_R_copy;
+
+              // Special for Jacobias
+              debug_ceres_jacobis.debug_file << jac_kont_R_copy << " ";
+            }
+          }
+          LOG(ERROR) << "Add jacobians for Rotation control point " << std::endl;
+
+
+
+          // [3] velocity 的雅可比
+          // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_vel_(jacobians[knot_num]);
+          // Eigen::Matrix3d J_vel_ = Skew(pt_) * R_e_r * S_ItoG.matrix().inverse();
+          // 1-11 修改
+          Eigen::Matrix3d J_vel_ = (Skew(pixel_cord) * R_e_r.transpose() * S_ItoG.matrix().transpose()).eval();
+          // Eigen::Matrix3d J_vel_ = Eigen::Matrix3d::Zero();
+          // J_vel_ = J_vel_.transpose()
+          LOG(ERROR) << "Calculate velocity Jacobbi " << std::endl;
+          // debug_ceres.debug_file << "J_vel_ = [" << Output_M(J_vel_) << "]\n";
+
+          /// position control point
+          Eigen::Matrix<double, 12, 3> Jac_p;
+          for (size_t i = knot_num; i <  2 * knot_num; i++) {
+            size_t idx = i;
+            if (jacobians[idx]) {
+              // Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac_kont_p(
+              //     jacobians[idx]);
+              Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> jac_kont_p(
+                  jacobians[idx]);
+              jac_kont_p.setZero();
+
+              LOG(ERROR) << "J_v.d_val_d_knot[i - knot_num] = " << J_v.d_val_d_knot[i - knot_num] << std::endl;         
+              LOG(ERROR) << "J_vel_ = " << Output_M(J_vel_) << std::endl;
+              LOG(ERROR) << "post_vec = " << post_vec << std::endl;
+              // LOG(ERROR) << "J_v.d_val_d_knot[i - knot_num] * J_vel_.transpose() * post_vec = " << J_v.d_val_d_knot[i - knot_num] * J_vel_.transpose() * post_vec << std::endl;
+
+              /// 1*1 1*3
+              // jac_kont_p = ((J_v.d_val_d_knot[i - knot_num] * J_vel_.transpose() * post_vec).transpose());
+              // jac_kont_p = (weight_ * jac_kont_p);
+
+              // jac_kont_p = (weight_ * (post_vec.transpose() * J_vel_ *  J_v.d_val_d_knot[i - knot_num])).eval();
+
+              // 1-24 修改
+              jac_kont_p = (weight_ * ((J_vel_ *  J_v.d_val_d_knot[i - knot_num]).transpose() * post_vec)).eval();
+
+
+              Eigen::Matrix3d jac_kont_p_copy = jac_kont_p;
+              debug_ceres.debug_file << "J_v.d_val_d_knot[" << i - knot_num << "] = [" << J_v.d_val_d_knot[i - knot_num] << "]\n";
+              debug_ceres.debug_file << "J_vel_ = " << Output_M(J_vel_) << std::endl;  
+              debug_ceres.debug_file << "jac_kont_p_" << i - knot_num << " = [" << Output_M(jac_kont_p_copy) << "]\n";
+              // debug_ceres.debug_file << "jac_kont_p_" << i - knot_num << " = [" << jac_kont_p_copy.transpose() << "]\n";
+
+              // Jac_p.block<1, 3>(i - knot_num, 0) = jac_kont_p_copy.transpose();
+              debug_ceres_jacobis.debug_file << Output_M(jac_kont_p_copy) << " ";
+              Jac_p.block<3, 3>(i - knot_num, 0) = jac_kont_p_copy;
+
+              // Special for Jacobias
+              // debug_ceres_jacobis.debug_file << Output_M(jac_kont_p_copy) << " ";             
+            }
+          }
+          LOG(ERROR) << "Add jacobians for Position control point " << std::endl;
+
+
+          // // Debug Residual & Jacobi
+          // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+          //     LOG(ERROR) << "Block size at index " << i << " = " << parameter_block_sizes()[i];
+          // }
+          // // 使用所有的参数块
+          // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+          //     LOG(ERROR) << "Parameter " << i << " = " << parameters[i][0];
+          // }
+          // LOG(ERROR) << "Parameter for last = " << parameters[8][0] 
+          // << ", " << parameters[8][1] 
+          // << ", " << parameters[8][2] << std::endl;
+
+          // for (size_t i = 0; i < this->parameter_block_sizes().size(); ++i) {
+          //     if (jacobians[i] != nullptr) {
+          //         LOG(ERROR) << "Jacobian at index " << i << " is valid.";
+          //     } else {
+          //         LOG(ERROR) << "Jacobian at index " << i << " is nullptr.";
+          //     }
+          // }
+
+          // 1-11 修改
+          // [3] linear_bias 的雅可比          
+          // Eigen::RowVector3d Jac_v_bias;
+          Eigen::Matrix3d Jac_v_bias;
+          if(jacobians[2 * knot_num])
+          {
+            // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_linear_bias_(jacobians[2 * knot_num]); 
+            Eigen::Map<Eigen::Matrix<double, 3, 3>> J_linear_bias_(jacobians[2 * knot_num]); 
+            J_linear_bias_.setZero();
+            // J_linear_bias_ = (weight_ * (Skew(pixel_cord) * R_e_r.transpose()).transpose() * post_vec).transpose().eval();
+            // 3-30 修改
+            J_linear_bias_ = (weight_ * (Skew(pixel_cord) * R_e_r.transpose() * S_ItoG.matrix().transpose()).transpose() * post_vec).eval();
+            Jac_v_bias = J_linear_bias_;
+
+            debug_ceres.debug_file << "J_linear_bias_ = " << Output_M(Jac_v_bias) << "]\n";
+            debug_ceres_jacobis.debug_file << Output_M(Jac_v_bias) << " ";
+
+          }
+
+          // [4] omega_bias 的雅可比
+          // Eigen::RowVector3d Jac_w_bias;
+          Eigen::Matrix3d Jac_w_bias;
+          if(jacobians[2 * knot_num + 1])
+          {
+            // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_angular_bias_(jacobians[2 * knot_num + 1]);
+
+            Eigen::Map<Eigen::Matrix<double, 3, 3>> J_angular_bias_(jacobians[2 * knot_num + 1]);
+            J_angular_bias_.setZero();
+            // 
+            // J_angular_bias_ = pre_vec.transpose() * Skew(pixel_cord);
+            
+            // // 1-24 修改
+            // J_angular_bias_ = (((Skew(pixel_cord) * R_e_r.transpose() * (- SO3d::hat(t_r_e) * R_e_r)).transpose() * post_vec).transpose() + pre_vec.transpose() * Skew(pixel_cord));     
+
+            // 3-18 修改
+            // J_angular_bias_ = (((Skew(pixel_cord) * R_e_r.transpose() * (- SO3d::hat(t_r_e) * R_e_r)).transpose() * post_vec).transpose() + pre_vec.transpose() * normal_flow.transpose() * Skew(pixel_cord));
+            J_angular_bias_ = (((Skew(pixel_cord) * R_e_r.transpose() * (- Skew(t_r_e) * R_e_r)).transpose() * post_vec).transpose() 
+                                + pre_vec * normal_flow.transpose() * Skew(pixel_cord));
+                                 
+            LOG(ERROR) << "J_angular_bias_ = " << Output_M(J_angular_bias_) << std::endl;
+
+            // Eigen::VectorXd J_angular_bias_copy = J_angular_bias_;
+            // Jac_w_bias = J_angular_bias_copy.transpose();
+
+
+            J_angular_bias_ = (weight_ * J_angular_bias_).eval();
+            Jac_w_bias = J_angular_bias_;
+            debug_ceres.debug_file << "J_angular_bias_ = " << Output_M(Jac_w_bias) << "]\n";
+
+            // debug_ceres.debug_file << "J_angular_bias_ = " << Output(J_angular_bias_copy) << "]\n";
+
+            // Special for Jacobias
+            debug_ceres_jacobis.debug_file << Output_M(Jac_w_bias) << " ";
+          }
+          LOG(ERROR) << "Add jacobians for Angular Bias" << std::endl;
+
+          // 1- 11 之前
+          // // [3] angular_bias 的雅可比
+          // Eigen::RowVector3d Jac_w_bias;
+          // if(jacobians[2 * knot_num])
+          // {
+          //   Eigen::Map<Eigen::Matrix<double, 1, 3>> J_angular_bias_(jacobians[2 * knot_num]);
+          //   J_angular_bias_.setZero();
+          //   J_angular_bias_ = (J_gyro_pre_.transpose() * post_vec).transpose() + pre_vec.transpose() * Skew(pt_) * R_e_r;
+
+          //   // Eigen::VectorXd J_angular_bias_copy = J_angular_bias_;
+          //   // Jac_w_bias = J_angular_bias_copy.transpose();
+
+
+          //   Jac_w_bias = J_angular_bias_.eval();
+          //   debug_ceres.debug_file << "J_angular_bias_ = " << Output(Jac_w_bias) << "]\n";
+
+          //   // debug_ceres.debug_file << "J_angular_bias_ = " << Output(J_angular_bias_copy) << "]\n";
+
+          //   // Special for Jacobias
+          //   debug_ceres_jacobis.debug_file << Output(Jac_w_bias) << " ";
+          // }
+          // LOG(ERROR) << "Add jacobians for Angular Bias" << std::endl;
+
+          // if(!optition.lock_extrincs)
+          // {
+              // 雅可比矩阵
+              // Eigen::Matrix<double, 1, 4> J;
+
+          // 对于旋转部分的雅可比
+          /* 推导过程
+          residuals[0] = (Skew(pt_) * R_e_r * (gyro_.cross(t_e_r) + vel_)).transpose() * 
+                              (flow_ - Skew(pt_) * R_e_r * (gyro_ + angular_bias))
+          A = (Skew(pt_) * R_e_r * (gyro_.cross(t_e_r) + vel_)).transpose()
+          B = (flow_ - Skew(pt_) * R_e_r * (gyro_ + angular_bias))
+          dA = Skew(pt_) * dR_theta * R_e_r * (gyro_.cross(t_e_r) + vel_)).transpose()
+          dA.transpose() = Skew(pt_) * dR_theta * R_e_r * (gyro_.cross(t_e_r) + vel_))
+
+          residuals[0] / R_e_r = ???
+          */
+          // if(!optition.lock_extrincs)
+
+          LOG(ERROR) << "lock_extrincs: " << ((lock_extrincs)? "True":"False") << std::endl;
+          // int t_offset_index = 2 * knot_num + 1;
+          // int t_offset_index = 2 * knot_num + 2;
+          if(!lock_extrincs)
+          {
+            if(jacobians[2 * knot_num + 2] && jacobians[2 * knot_num + 3])
+            // if(jacobians[2 * knot_num + 1] && jacobians[2 * knot_num + 2])
+            {
+              Eigen::Map<Eigen::Matrix<double, 3, 3>> J_R(jacobians[2 * knot_num + 2]);
+              Eigen::Map<Eigen::Matrix<double, 3, 3>> J_t(jacobians[2 * knot_num + 3]);
+              // Eigen::MatrixXd J_pre_R = - (Skew(pixel_cord) * Skew(R_e_r * ((gyro_ + omega_bias).cross(t_e_r) + doppler_velocity_))).transpose();
+              
+              // Eigen::MatrixXd J_pre_t = - (Skew(pixel_cord) * R_e_r * Skew(gyro_ + omega_bias)).transpose();
+
+              // Eigen::MatrixXd J_post_R = - (Skew(pixel_cord) * Skew(R_e_r * ((gyro_ + omega_bias).cross(t_e_r) + doppler_velocity_)));
+
+              // 3-17 修改
+              Eigen::Matrix3d J_pre_R = - Skew(pixel_cord) * R_e_r.transpose() * Skew(((S_ItoG.matrix().transpose() * v_inG + linear_bias) + (gyro_ + R_e_r * omega_bias).cross(t_r_e)))
+                                        + Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e) * R_e_r * Skew(omega_bias);
+              
+              Eigen::Matrix3d J_pre_t = Skew(pixel_cord) * R_e_r.transpose() * Skew(gyro_ + R_e_r * omega_bias); // .transpose()
+
+              Eigen::RowVector3d J_post_R =  - normal_flow.transpose() * Skew(pixel_cord) * R_e_r.transpose() * Skew(gyro_);  // .transpose()
+
+              // debug_ceres.debug_file << "J_pre_R = " << J_pre_R << "]\n";
+              // debug_ceres.debug_file << "J_pre_t = " << J_pre_t << "]\n";
+              // debug_ceres.debug_file << "J_post_R = " << J_post_R << "]\n";
+
+              debug_ceres.debug_file << "J_pre_R = " << Output_M(J_pre_R) << "]\n";
+              debug_ceres.debug_file << "J_pre_t = " << Output_M(J_pre_t) << "]\n";
+              debug_ceres.debug_file << "J_post_R = " << Output_M(J_post_R) << "]\n";
+
+              J_R = (J_pre_R.transpose() * post_vec + pre_vec * J_post_R).transpose();
+              J_t = (J_pre_t.transpose() * post_vec).transpose();
+
+              Eigen::Matrix3d J_R_copy = J_R;
+              Eigen::Matrix3d J_t_copy = J_t;
+
+              // debug_ceres.debug_file << "J_R = " << J_R_copy << "]\n";
+              // debug_ceres.debug_file << "J_t = " << J_t_copy << "]\n";
+
+              debug_ceres.debug_file << "J_R = " << Output_M(J_R_copy) << "]\n";
+              debug_ceres.debug_file << "J_t = " << Output_M(J_t_copy) << "]\n";
+
+              // 如果优化 extrincs,那么Jacobi需要重新对应
+              // t_offset_index =  2 * knot_num + 4;
+            }
+          }
+
+          /*
+            Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+            Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + rot_accel * t_e_r + angular_bias).cross(t_e_r) + S_ItoG.matrix().inverse() * v_inG); // use it add tranpose()
+            Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + rot_accel * t_e_r + angular_bias));
+            double residual = pre_vec.transpose() * post_vec
+          */
+
+          // 添加时移优化
+          // Eigen::RowVectorXd Jac_t;
+          LOG(ERROR) << "Evaluate timeoffset" << std::endl;
+          double Jac_t =0;
+          if(jacobians[t_offset_index])
+          {
+            // 这个雅可比是标量
+            // Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> J_t_offset(jacobians[t_offset_index], 3);  // Assuming a 3D vector
+             
+            // J_t_offset.setZero();
+            // Eigen::Map<Eigen::Matrix<double, 1, 1, Eigen::RowMajor>> J_t_vec(jacobians[t_offset_index]);
+
+            // 3-18 修改
+            Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> J_t_vec(jacobians[t_offset_index]);
+            J_t_vec.setZero();
+            // Eigen::VectorXd 
+            // J_t_vec = ((Skew(pt_) * R_e_r * t_e_r.cross(rot_accel)).transpose() * post_vec)
+            //               + pre_vec.transpose() * (Skew(pt_) * R_e_r * rot_accel);
+            // J_t_vec *= (1e-9 * weight_);
+
+            // 1-11 修改
+            // J_t_vec = ( - (Skew(pixel_cord) * R_e_r.transpose() * t_e_r.cross(rot_accel)).transpose() * post_vec)
+            //               + pre_vec.transpose() * (Skew(pixel_cord) * R_e_r.transpose() * rot_accel);
+            // J_t_vec = (1e-9 * weight_ * J_t_vec).eval();
+            LOG(ERROR) << "J_t_vec allocate" << std::endl;
+            // 1-13 修改
+            /*
+            Eigen::Vector3d t_r_e_temp = R_e_r.transpose() * t_e_r;
+            Eigen::Vector3d t_r_e = -1.0 * t_r_e_temp;
+            LOG(ERROR) << "t_r_e = " << t_r_e << std::endl;
+            Eigen::Vector3d J_pre_d_t = Skew(pixel_cord) * Skew(t_r_e) * rot_accel; 
+            LOG(ERROR) << "J_pre_d_t = " << J_pre_d_t << std::endl;
+            Eigen::Vector3d J_post_d_t = Skew(pixel_cord) * R_e_r.transpose() * rot_accel;
+            LOG(ERROR) << "J_post_d_t = " << J_post_d_t << std::endl; 
+            LOG(ERROR) << "J_pre_d_t = " << J_pre_d_t << std::endl;
+            LOG(ERROR) << "J_post_d_t = " << J_post_d_t << std::endl;
+            Eigen::Matrix<double, 1, 1> J_t_temp = J_pre_d_t.transpose() * post_vec
+                          + pre_vec.transpose() * J_post_d_t;
+                          // J_t_vec = 
+            J_t_vec = 1e-9 * weight_ * J_t_temp;
+            J_t_vec = J_t_vec.eval();
+            */
+
+
+            // 1-24 修改
+            // Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((S_ItoG.matrix().transpose() * v_inG + linear_bias) + (gyro_ + rot_accel * dt + R_e_r * omega_bias).cross(t_r_e))); 
+            // Eigen::Vector3d post_vec = flow_ + Skew(pixel_cord) * (R_e_r.transpose() * (gyro_ + rot_accel * dt + omega_bias)); // TODO: omega_bias is in event
+
+            Eigen::Vector3d t_r_e_temp = R_e_r.transpose() * t_e_r;
+            Eigen::Vector3d t_r_e = -1.0 * t_r_e_temp;
+            LOG(ERROR) << "t_r_e = " << Output(t_r_e.transpose()) << std::endl;
+            // Eigen::Vector3d J_pre_d_t = - 1.0 * Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e) * rot_accel; 
+            // LOG(ERROR) << "J_pre_d_t = " << J_pre_d_t << std::endl;
+            // Eigen::Vector3d J_post_d_t = Skew(pixel_cord) * R_e_r.transpose() * rot_accel;
+
+            // 3-18 修改     
+            Eigen::Vector3d J_pre_d_t = - Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e) * rot_accel; 
+            // LOG(ERROR) << "J_pre_d_t = " << J_pre_d_t << std::endl;
+            double J_post_d_t = normal_flow.transpose() * Skew(pixel_cord) * R_e_r.transpose() * rot_accel;
+            // LOG(ERROR) << "J_post_d_t = " << J_post_d_t << std::endl; 
+
+            LOG(ERROR) << "J_pre_d_t = " << Output(J_pre_d_t.transpose()) << std::endl;
+            LOG(ERROR) << "J_post_d_t = " << J_post_d_t << std::endl;
+            Eigen::RowVector3d J_t_temp = J_pre_d_t.transpose() * post_vec
+                          + pre_vec.transpose() * J_post_d_t;
+                          // J_t_vec = 
+            J_t_vec = 1e-9 * weight_ * J_t_temp;
+            J_t_vec = J_t_vec.eval();
+
+           /*
+            Eigen::Matrix3d R_e_r = q_e_r.toRotationMatrix();   
+            Eigen::Vector3d pre_vec = Skew(pt_) * R_e_r * ((gyro_ + rot_accel * t_e_r + angular_bias).cross(t_e_r) + S_ItoG.matrix().inverse() * v_inG); // use it add tranpose()
+            Eigen::Vector3d post_vec = (flow_ +  Skew(pt_) * R_e_r * (gyro_ + rot_accel * t_e_r + angular_bias));
+            double residual = pre_vec.transpose() * post_vec
+          */      
+
+
+            // Eigen::VectorXd J_t_vec_copy = J_t_vec;
+            // debug_ceres.debug_file << "J_t_vec = " << J_t_vec_copy << "]\n";
+            // Jac_t = J_t_vec_copy.transpose();
+
+            // Jac_t = J_t_vec.transpose().eval();
+
+            Jac_t = J_t_vec(0, 0);
+
+            debug_ceres_jacobis.debug_file << Jac_t << "]\n";
+
+            // double J_t_offset = J_t_vec.eval();
+            // J_t_offset *= 1e-9 * weight_;
+            // jacobians[t_offset_index][0] = J_t_offset;
+          }
+
+          LOG(ERROR) << "Add jacobians for J_t_offset" << std::endl;
+
+      // }
+
+      LOG(ERROR) << "All Jacobi for Event factor" << std::endl;
+      debug_ceres.debug_file << "All Jacobi for Event factor" << std::endl;
+      debug_ceres.debug_file << "Jac_R_ = " << Output_M(Jac_R) << std::endl;
+      debug_ceres.debug_file << "Jac_p_ = " << Output_M(Jac_p) << std::endl;
+      debug_ceres.debug_file << "Jac_linear_bias_ = " << Output_M(Jac_v_bias) << std::endl;
+      debug_ceres.debug_file << "Jac_angular_bias_ = " << Output_M(Jac_w_bias) << std::endl;
+      debug_ceres.debug_file << "Jac_t = " << Jac_t << std::endl;
+      // debug_ceres.debug_file << "Jac_t = " << Output(Jac_t) << std::endl;
+      // debug_ceres.debug_file << "Jac_t = " << Output_double(Jac_t) << std::endl;
+
+      // debug_ceres.debug_file << std::endl;
+      debug_ceres.Close();
+      debug_ceres_jacobis.Close();
+
+      LOG(ERROR) << "All Jacobi for Event factor Done" << std::endl;
+
+      return true;
+    }
+
+private:
+    int64_t time_ns_;
+    // cv::Point2d pt_;
+    Eigen::Vector3d pt_;
+    Eigen::Vector3d flow_;
+    Eigen::Vector3d doppler_velocity_;
+    Eigen::Quaterniond q_e_r;
+    Eigen::Vector3d t_e_r;
+    SplineMeta<SplineOrder> spline_meta_;
+    // Vec6d info_vec_;
+    Eigen::Vector3d angular_bias;
+    Eigen::Vector3d gravity;
+    bool lock_extrincs;
+    double weight_;
+};
+
+
+// bias_gyr_i, bias_gyr_j, bias_acc_i, bias_acc_j
+class NewBiasFactor : public ceres::SizedCostFunction<6, 3, 3, 3, 3> {
+ public:
+ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  NewBiasFactor(double dt, const Eigen::Matrix<double, 6, 1>& sqrt_info) {
+    double sqrt_dt = std::sqrt(dt);
+    sqrt_info_.setZero();
+    sqrt_info_.diagonal() = sqrt_info / sqrt_dt;
+  }
+  virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+    using Vec3d = Eigen::Matrix<double, 3, 1>;
+    using Vec6d = Eigen::Matrix<double, 6, 1>;
+
+    LOG(ERROR) << "Evaluate Bias Factor " << std::endl;
+
+    debug_ceres.Open();
+    debug_ceres.debug_file << std::endl;
+    debug_ceres.debug_file << "    ---------------------- Evaluate NewBiasFactor ------------------    " << std::endl;
+
+
+    // Check the sizes match.
+    const std::vector<int>& parameter_block_sizes_temp =
+          this->parameter_block_sizes();
+    LOG(ERROR) << "parameters need have " << (parameter_block_sizes_temp).size() <<std::endl;
+    for(auto& param_block_size: parameter_block_sizes_temp)
+    {
+      LOG(ERROR) << "parameter size = " << param_block_size <<std::endl;
+    }
+
+    if(parameters == nullptr)
+    {
+      LOG(ERROR) << "parameters not exist " << std::endl;
+      return false;
+    }
+    else
+    {
+      LOG(ERROR) << "parameters exist " << std::endl;
+    }
+
+    if(parameters[0] != nullptr)
+      LOG(ERROR) << " parameters[0] exist " << std::endl;
+    else
+      LOG(ERROR) << " parameters[0] not exist " << std::endl;
+
+    Eigen::Map<Vec3d const> bias_w_i(parameters[0]);
+    Eigen::Map<Vec3d const> bias_w_j(parameters[1]);
+    Eigen::Map<Vec3d const> bias_v_i(parameters[2]);
+    Eigen::Map<Vec3d const> bias_v_j(parameters[3]);
+
+    LOG(ERROR) << "Get All Bias Parameters " << std::endl;
+
+    LOG(ERROR) << "bias_w_i: " << Output(bias_w_i.transpose());
+    LOG(ERROR) << "bias_w_j: " << Output(bias_w_j.transpose());
+    LOG(ERROR) << "bias_v_i: " << Output(bias_v_i.transpose());
+    LOG(ERROR) << "bias_v_j: " << Output(bias_v_j.transpose());
+    LOG(ERROR) << "bias_w_j - bias_w_i: " << Output(bias_w_j - bias_w_i);
+    LOG(ERROR) << "bias_v_j - bias_v_i: " << Output(bias_v_j - bias_v_i);
+
+
+    Vec6d res;
+    res.block<3, 1>(0, 0) = bias_w_j - bias_w_i;
+    res.block<3, 1>(3, 0) = bias_v_j - bias_v_i;
+
+    Eigen::Map<Vec6d> residual(residuals);
+
+
+    debug_ceres.Open();
+    debug_ceres_jacobis.Open();
+    if(!clear_debug)
+    {
+      clear_debug = true;
+      debug_ceres.Close();
+
+      debug_ceres.debug_file.open(debug_ceres.file_path, std::ios::trunc);
+      // debug_ceres.debug_file.clear();
+      debug_ceres.debug_file.close();
+
+      debug_ceres.Open();
+      debug_ceres.debug_file << "Start to Record \n";
+    }
+    debug_ceres.debug_file << "Evaluate BiasFactor \n";
+
+    // LOG(ERROR) << "open debug file: " << debug_ceres.file_path << std::endl;
+
+    Vec6d residual_vec = residual;
+    // debug_ceres.debug_file << "residuals = " << std::setprecision(5) << residual_vec.transpose() << std::endl;
+    LOG(ERROR) << "residuals done" << std::endl;
+
+    Eigen::RowVectorXd bias_w_i_row_vec = bias_w_i.transpose();
+    Eigen::RowVectorXd bias_w_j_row_vec = bias_w_j.transpose();
+    Eigen::RowVectorXd bias_v_i_row_vec = bias_v_i.transpose();
+    Eigen::RowVectorXd bias_v_j_row_vec = bias_v_j.transpose();
+    debug_ceres.debug_file << "Details: weight_ = " << std::setprecision(5)
+                                  << "\n bias_w_i = [" <<  Output(bias_w_i_row_vec) << "] "
+                                  << "\n bias_w_j = [" <<  Output(bias_w_j_row_vec) << "] "
+                                  << "\n bias_v_i = [" <<  Output(bias_v_i_row_vec) << "] "
+                                  << "\n bias_v_j = [" <<  Output(bias_v_j_row_vec) << "] "
+                                   << "\n sqrt_info_ = [" <<  sqrt_info_ << std::endl;
+
+                                
+
+    LOG(ERROR) << "sqrt_info_ = \n" << Output_M(sqrt_info_) << std::endl;
+    LOG(ERROR) << "res = " << Output(res.transpose()) << std::endl;
+
+    residual = sqrt_info_ * res;
+    // + Vec6d::Constant(10); // HAO TODO: Test residual of bias if too small
+
+    LOG(ERROR) << "residual = " << Output(residual.transpose()) << std::endl;
+
+
+    // // Debug: Residual & Jacobi
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Block size at index " << i << " = " << parameter_block_sizes()[i];
+    // }
+    // // 使用所有的参数块
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Parameter " << i << " = " << parameters[i][0];
+    // }
+    // LOG(ERROR) << "Parameter for last = " << parameters[8][0] 
+    // << ", " << parameters[8][1] s
+    // << ", " << parameters[8][2] << std::endl;
+
+
+
+    if (jacobians) {
+
+      debug_ceres_jacobis.debug_file << "Evaluate BiasFactor \n";
+      debug_ceres_jacobis.debug_file << Output(res.transpose()) << " ";
+      debug_ceres_jacobis.debug_file << "[ ";
+
+      for (size_t i = 0; i < this->parameter_block_sizes().size(); ++i) {
+          if (jacobians[i] != nullptr) {
+              LOG(ERROR) << "Jacobian at index " << i << " is valid.";
+          } else {
+              LOG(ERROR) << "Jacobian at index " << i << " is nullptr.";
+          }
+      }
+
+      if (jacobians[0]) {
+        Eigen::Map<Eigen::Matrix<double, 6, 3, Eigen::RowMajor>> jac_bg_i(
+            jacobians[0]);
+        jac_bg_i.setZero();
+        jac_bg_i.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
+        jac_bg_i.applyOnTheLeft(sqrt_info_);
+
+
+        Eigen::MatrixXd jac_bg_i_copy = jac_bg_i;
+        debug_ceres.debug_file << "J_bg_i = " << Output_M(jac_bg_i_copy) << "]\n";
+
+
+        debug_ceres_jacobis.debug_file << Output_M(jac_bg_i_copy) << "\n";
+      }
+      if (jacobians[1]) {
+        Eigen::Map<Eigen::Matrix<double, 6, 3, Eigen::RowMajor>> jac_bg_j(
+            jacobians[1]);
+        jac_bg_j.setZero();
+        jac_bg_j.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+        jac_bg_j.applyOnTheLeft(sqrt_info_);
+
+        Eigen::MatrixXd jac_bg_j_copy = jac_bg_j;
+        debug_ceres.debug_file << "` = " << Output_M(jac_bg_j_copy) << "]\n";
+
+        debug_ceres_jacobis.debug_file << Output_M(jac_bg_j_copy) << " ";
+      }
+      if (jacobians[2]) {
+        Eigen::Map<Eigen::Matrix<double, 6, 3, Eigen::RowMajor>> jac_ba_i(
+            jacobians[2]);
+        jac_ba_i.setZero();
+        jac_ba_i.block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
+        jac_ba_i.applyOnTheLeft(sqrt_info_);
+
+        Eigen::MatrixXd jac_ba_i_copy = jac_ba_i;
+        debug_ceres.debug_file << "J_ba_i = " << Output_M(jac_ba_i_copy) << "]\n";
+
+        debug_ceres_jacobis.debug_file << Output_M(jac_ba_i_copy) << " ";
+      }
+      if (jacobians[3]) {
+        Eigen::Map<Eigen::Matrix<double, 6, 3, Eigen::RowMajor>> jac_ba_j(
+            jacobians[3]);
+        jac_ba_j.setZero();
+        jac_ba_j.block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
+        jac_ba_j.applyOnTheLeft(sqrt_info_);
+
+        Eigen::MatrixXd jac_ba_j_copy = jac_ba_j;
+        debug_ceres.debug_file << "J_ba_j = " << Output_M(jac_ba_j_copy) << "]\n";
+
+        debug_ceres_jacobis.debug_file << Output_M(jac_ba_j_copy) << "]\n";
+      }
+    }
+    else
+    {
+      LOG(ERROR) << "Jacobi is not exist " << std::endl; 
+    }
+
+    debug_ceres.Close();
+
+
+    debug_ceres_jacobis.Close();
+    return true;
+  }
+
+ private:
+  Eigen::Vector3d acc_i_, acc_j_;
+  Eigen::Vector3d gyr_i_, gyr_j_;
+  Eigen::Matrix<double, 6, 6> sqrt_info_;
+};
+
+
+// HAO TODO: 以雷达的时间为准
+class TwistBodyFactor : public ceres::CostFunction, SplitSpineView{
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using SO3d = Sophus::SO3<double>;
+
+  TwistBodyFactor(int64_t time_ns, const Eigen::Vector6d twist,
+                  const SplineMeta<SplineOrder>& spline_segment_meta,
+                  double weight)// const Vec6d& info_vec)
+      : time_ns_(time_ns),
+        spline_meta_(spline_segment_meta),
+        weight_(weight)
+        // info_vec_(info_vec) 
+        {
+          set_num_residuals(6);           // Twist Residuals
+
+          size_t knot_num = spline_meta_.NumParameters();
+
+          // std::cout << "knot_num = " << knot_num << std::endl;
+
+          // TODO: 需要提供采样曲线的多普勒速度和偏执
+          for (size_t i = 0; i < knot_num; ++i) {             
+            mutable_parameter_block_sizes()->push_back(4);    // HAO TODO:
+          }
+          for (size_t i = 0; i < knot_num; ++i) {
+            mutable_parameter_block_sizes()->push_back(3);
+          }
+
+          mutable_parameter_block_sizes()->push_back(3);  // linear bias
+
+          mutable_parameter_block_sizes()->push_back(3);  // angular bias
+
+          // mutable_parameter_block_sizes()->push_back(3);  // R_e_r 
+          // mutable_parameter_block_sizes()->push_back(3);  // t_e_r
+
+          // mutable_parameter_block_sizes()->push_back(1);  // time_offset 雷达时间作为系统时间,不存在时间偏移
+        }
+
+   virtual bool Evaluate(double const* const* parameters, double* residuals,
+                        double** jacobians) const {
+    typename SO3View::JacobianStruct J_R;
+    // typename SO3View::JacobianStruct J_rot_a;
+    typename R3View::JacobianStruct J_v;
+    typename SO3View::JacobianStruct J_w;
+
+    LOG(ERROR) << "Evaluate TwistBodyFactor " << std::endl;
+
+    // 解析状态参数 parameters
+    int knot_num = this->spline_meta_.NumParameters();               // 前 knot_num 是位置控制点 在113,120行可以计算
+
+    // double time_offset_in_ns = parameters[Knot_offset + 2][0];
+    int64_t t_corrected = time_ns_; //  + (int64_t)time_offset_in_ns;
+
+    // 估计的速度
+    Eigen::Vector3d gyro_, v_inG;
+    SO3d S_ItoG;
+    if (jacobians){
+      gyro_ = SO3View::VelocityBody(t_corrected,
+                                    spline_meta_.segments.at(0),
+                                    parameters + R_offset[0], &J_w);
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, &J_R);
+
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, &J_v);
+    }else{
+      gyro_ = SO3View::VelocityBody(t_corrected,
+                                    spline_meta_.segments.at(0),
+                                    parameters + R_offset[0], nullptr);
+      // HAO TODO:
+      S_ItoG = SO3View::EvaluateRp(t_corrected, spline_meta_.segments.at(0),
+                              parameters, nullptr);
+      v_inG = R3View::velocity(t_corrected,
+                              spline_meta_.segments.at(0),
+                              parameters + knot_num, nullptr);
+    }
+
+
+    // LOG(ERROR) << "Pointer to linear_bias: " << parameters[2 * knot_num] << std::endl;
+    Eigen::Map<Vec3d const> linear_bias(parameters[2 * knot_num]);          // 线速度偏置
+    Eigen::Map<Vec3d const> angular_bias(parameters[2 * knot_num + 1]);      // 角速度偏置
+
+    // Residual
+    Eigen::Vector3d linear_velocity = twist.block<3,1>(0,0);
+    Eigen::Vector3d angular_velocity = twist.block<3,1>(3,0);
+    Eigen::Vector6d res;
+    res.block<3, 1>(0, 0) = linear_velocity - S_ItoG.transpose() * v_inG - linear_bias;    // linear_bias in radar frame
+    res.block<3, 1>(3, 0) = angular_velocity - gyro_ - R_e_r * angular_bias;               // angular_bias in event frame
+    Eigen::Map<Vec6d> residual(residuals);
+
+    debug_ceres.Open();
+    if(!clear_debug)
+    {
+      clear_debug = true;
+      debug_ceres.Close();
+
+      debug_ceres.debug_file.open(debug_ceres.file_path, std::ios::trunc);
+      // debug_ceres.debug_file.clear();
+      debug_ceres.debug_file.close();
+
+      debug_ceres.Open();
+      debug_ceres.debug_file << "Start to Record \n";
+    }
+    debug_ceres.debug_file << std::endl;
+    debug_ceres.debug_file << "    ---------------------- Evaluate TwistBodyFactor ------------------    " << std::endl;
+    // LOG(ERROR) << "open debug file: " << debug_ceres.file_path << std::endl;
+    debug_ceres.debug_file << "TwistBodyFactor residuals = " << std::setprecision(20) << Output(residual.transpose()) << std::endl;
+
+    // jacobian
+    if (!jacobians) {
+      LOG(ERROR) << "TwistBodyFactor No Jacobians " << std::endl;
+      debug_ceres.debug_file << "No Jacobians" << std::endl;
+      debug_ceres.Close();
+      
+      return true;
+    }
+    else
+    {
+      LOG(ERROR) << " Calculate Jacobians " << std::endl;
+    }
+
+
+    Eigen::Matrix3d temp = S_ItoG.matrix();
+    Eigen::Map<Eigen::Matrix3d> S_GtoI_map(temp.data());
+    Eigen::Matrix3d S_GtoI = S_GtoI_map.transpose();
+
+    Eigen::Vector3d v_inI_compen = (S_GtoI * v_inG + linear_bias);
+    LOG(ERROR) << "linear_bias = " << Output(linear_bias.transpose()) << std::endl;
+    LOG(ERROR) << "v_inG = " << Output(v_inG.transpose()) << std::endl;
+    LOG(ERROR) << "v_inI_compen = " << v_inI_compen << std::endl;
+    LOG(ERROR) << "doppler_ = " << doppler_ << std::endl;
+    LOG(ERROR) << "pt_.normalized().transpose() = " << Output(pt_.normalized().transpose()) << std::endl;
+
+    // debug
+    Eigen::RowVector3d pt_row_vec = pt_.transpose();
+
+    Eigen::RowVector3d linear_bias_row_vec = linear_bias.transpose(); //.eval();
+    
+    debug_ceres.debug_file << "Doppler Details: weight_ = " <<  weight_ << std::endl;
+    debug_ceres.debug_file << "Doppler residuals = " << std::setprecision(20) <<  residuals[0];
+    // debug_ceres.debug_file << "\n pt_row_vec = [" <<  pt_row_vec << "] ";
+    debug_ceres.debug_file << "\n pt_row_vec = [" <<  Output(pt_row_vec) << "] ";
+    debug_ceres.debug_file << "\n pt_row_vec.norm = [" <<  Output(pt_row_vec.normalized()) << "] "
+                                  << "\nS_GtoI = [" << Output_M(S_GtoI) << "] "
+                                  << "\ndoppler_ = [" << doppler_ << "] "
+                                  << "\nS_ItoG = [" << Output_M(S_ItoG.matrix()) << "] "
+                                  << "\nv_inG = [" << Output(v_inG.transpose()) << "] " 
+                                  << "\nlinear_bias = [" << Output(linear_bias_row_vec) << "] " << std::endl;
+
+  
+    // 不评估雅可比就返回
+    if (!jacobians) {
+      LOG(ERROR) << "Doppler No Jacobians " << std::endl;
+      debug_ceres.debug_file << "No Jacobians" << std::endl;
+      debug_ceres.Close();
+      
+      return true;
+    }
+    else
+    {
+      LOG(ERROR) << " Calculate Jacobians " << std::endl;
+    }
+
+    debug_ceres_jacobis.Open();
+    debug_ceres_jacobis.debug_file << "Evaluate DopplerFactor Res J_R_0 J_R_1 J_R_2 J_R_3 J_p_0 J_p_1 J_p_2 J_p_3 J_linear_bias \n";
+    debug_ceres_jacobis.debug_file << residuals[0] << " ";
+
+    Eigen::Vector3d jac_lhs_R = Skew(v_inG).transpose() * S_ItoG.matrix() * pt_.normalized();
+
+
+    jac_lhs_R = (weight_ * jac_lhs_R);
+    // LOG(ERROR) << " jac_lhs_R = " << Output(jac_lhs_R) << std::endl;
+    debug_ceres.debug_file << "jac_lhs_R = " << Output(jac_lhs_R) << std::endl;
+
+
+    LOG(ERROR) << " start to calculate Rotation control points " << std::endl;
+
+    /// Rotation control point
+
+    Eigen::Matrix3d jac_lhs_R = S_ItoG.matrix().transpose() * Skew(v_inG);
+    Eigen::Matrix<double, 12, 4> Jac_R;
+    for (size_t i = 0; i < knot_num; i++) {
+
+      size_t idx = i + J_R.start_idx;
+      if (jacobians[idx]) {   
+        Eigen::Map<Eigen::Matrix<double, 6, 4, Eigen::RowMajor>> jac_kont_R(
+            jacobians[idx]);
+        jac_kont_R.setZero();
+
+        debug_ceres.debug_file << "jac_lhs_R = [" <<  Output_M(jac_lhs_R) << "]\n";     
+        debug_ceres.debug_file << "J_R.d_val_d_knot[" << i << "] = [" <<  Output_M(J_R.d_val_d_knot[i]) << "]\n";
+        Eigen::Matrix3d jac_kont_R_pre = jac_lhs_R * J_R.d_val_d_knot[i];
+
+        
+        debug_ceres.debug_file << "J_R_pre.d_val_d_knot[" << i << "] = [" << Output(jac_kont_R_pre) << "]" << std::endl;
+        jac_kont_R.block<3, 3>(0, 0) += (weight_ * jac_kont_R_pre).eval();
+
+        Eigen::RowVectorXd jac_kont_R_copy = jac_kont_R;
+
+        LOG(ERROR) << "J_R_" << i << " = [" << Output(jac_kont_R_copy) << std::endl;
+        // debug_ceres.debug_file << "J_R_" << i << " = [" << jac_kont_R_copy.transpose() << "]\n";
+        debug_ceres.debug_file << "J_R_" << i << " = [" << Output(jac_kont_R_copy) << "]\n";
+      
+        Jac_R.block<6,3>(i, 0) = jac_kont_R_copy;
+
+        // debug_ceres_jacobis.debug_file << jac_kont_R_copy.transpose() << " ";
+        debug_ceres_jacobis.debug_file << Output(jac_kont_R_copy) << " ";
+      }
+    }
+    LOG(ERROR) << "Calculate Rotation Control Jacobbi " << std::endl;
+
+    // 检查 I:
+    debug_ceres.debug_file << "Jac_R = " << Output_M(Jac_R) << std::endl;
+
+    // LOG(ERROR) << "Jacobi for position J_v." << std::endl;
+      // for (size_t i = 0; i < knot_num; ++i) {
+      //     LOG(ERROR) << "Mat3[" << i << "] =\n" << J_v.d_val_d_knot[i] << "\n\n";
+      // }
+  
+    Eigen::Vector3d J_v_b_;
+    J_v_b_ = (- weight_ * S_ItoG.transpose());
+    debug_ceres.debug_file << "S_ItoG = " << Output_M(S_ItoG.matrix()) << "\n";
+
+    Eigen::Vector6d res;
+    res.block<3, 1>(0, 0) = linear_velocity - S_ItoG.transpose() * v_inG - linear_bias;    // linear_bias in radar frame
+    res.block<3, 1>(3, 0) = angular_velocity - gyro_ - R_e_r * angular_bias;               // angular_bias in event frame   
+
+    Eigen::Matrix<double, 4, 3> Jac_p;
+    /// position control point
+    for (size_t i = knot_num; i < 2 * knot_num; i++) {
+      size_t idx = i;   // [0, knot_num - 1]
+      // LOG(ERROR) << "idx = " << idx << std::endl;
+      if (jacobians[idx]) {
+        Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> jac_kont_p(
+            jacobians[idx]);
+        jac_kont_p.setZero();
+        
+        double d_val_d_knot = J_v.d_val_d_knot[i - knot_num];
+        Eigen::VectorXd temp_cal;
+        // temp_cal.setZero();
+        // temp_cal = (J_v_d_ * J_v.d_val_d_knot[i - knot_num]);
+        temp_cal = (d_val_d_knot * J_v_b_);
+
+        double J_v_d_copy = J_v.d_val_d_knot[i - knot_num];
+        LOG(ERROR) << "J_v.d_val_d_knot[i - knot_num] = " << J_v_d_copy << std::endl;
+        debug_ceres.debug_file << "J_v.d_val_d_knot[" << i - knot_num << "] = " << J_v_d_copy << std::endl;
+
+
+        // debug_ceres.debug_file << "temp_cal = [" << temp_cal << "]"
+        //                        << std::endl;
+
+        // debug_ceres.debug_file << "temp_cal = [" << J_v_d_ << "] "
+        //                        << " * [" << J_v.d_val_d_knot[i - knot_num] << "]"
+        //                        << " = 1: " << (J_v_d_ * J_v.d_val_d_knot[i - knot_num])
+        //                        << "\n"
+        //                        << " = 2: " << (J_v_d_ * J_v.d_val_d_knot[i - knot_num]).eval()
+        //                        << std::endl;
+        /// 1*1 1*3
+        // jac_kont_p =  (J_v_d_ * J_v.d_val_d_knot[i - knot_num]).eval(); // TODO: i - knot_num 0-4 的范围
+        jac_kont_p =  (weight_ * J_v.d_val_d_knot[i - knot_num] * J_v_b_ ).eval(); // TODO: i - knot_num 0-4 的范围
+        // jac_kont_p = (weight_ * jac_kont_p).eval();
+
+        Eigen::RowVectorXd jac_kont_p_copy; // = jac_kont_p;
+        jac_kont_p_copy = jac_kont_p;
+        // debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << jac_kont_p_copy.transpose() << "]\n";
+
+        // LOG(ERROR) << "J_v_d_" << i - knot_num << " = \n[" << J_v_d_ << "]\n";
+        LOG(ERROR) << "J_v_b_ " << std::endl;
+        // debug_ceres.debug_file << "J_v_d_" << i - knot_num << " = [" << J_v_d_.transpose() << "]\n";
+        debug_ceres.debug_file << "J_v_b_ = [" << Output(J_v_b_.transpose()) << "]\n";
+        // debug_ceres.debug_file << "J_v_d_" << i - knot_num << " = \n[" << J_v_d_.transpose() << "]\n";
+        LOG(ERROR) << "J_v_.d_val_d_knot_" << std::endl;
+        // debug_ceres.debug_file << "J_v_.d_val_d_knot_" << i - knot_num << " = [" << (J_v.d_val_d_knot[i - knot_num]) << "]\n";
+        debug_ceres.debug_file << "J_v_.d_val_d_knot_" << i - knot_num << " = [" << (J_v_d_copy) << "]\n";
+
+        // Eigen::Matrix<double, 1, 3, Eigen::RowMajor> jac_kont_p_copy = jac_kont_p;
+        // Eigen::VectorXd jac_kont_p_copy = jac_kont_p;
+        // LOG(ERROR) << "J_p_" << i - knot_num << " = \n[" << jac_kont_p_copy << "]\n";
+        // debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << jac_kont_p_copy.transpose() << "]\n";
+        LOG(ERROR) << "J_p_" << i - knot_num << " = [" << Output(jac_kont_p_copy) << std::endl;
+        debug_ceres.debug_file << "J_p_" << i - knot_num << " = [" << Output(jac_kont_p_copy) << "]\n";
+
+        Jac_p.block<1,3>(i - knot_num, 0) = jac_kont_p_copy;
+
+        // debug_ceres_jacobis.debug_file << jac_kont_p_copy.transpose() << " ";
+        LOG(ERROR) << "jac_kont_p_copy = " << " ";
+        debug_ceres_jacobis.debug_file << Output(jac_kont_p_copy) << " ";
+      }
+    }
+
+    LOG(ERROR) << "Calculate Position Control Jacobbi " << std::endl;
+
+    // // DEBUG:
+    // LOG(ERROR) << "Parameters.size = " << this->parameter_block_sizes().size() << std::endl;
+
+    // // LOG(ERROR) << "Parameters.size = " << mutable_parameter_block_sizes().size() << std::endl;
+    // LOG(ERROR) << "Search for = " << 2 * knot_num << std::endl;
+
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Block size at index " << i << " = " << parameter_block_sizes()[i];
+    // }
+    // // 使用所有的参数块
+    // for (int i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     LOG(ERROR) << "Parameter " << i << " = " << parameters[i][0];
+    // }
+    // LOG(ERROR) << "Parameter for last = " << parameters[8][0] 
+    // << ", " << parameters[8][1] 
+    // << ", " << parameters[8][2] << std::endl;
+
+    // for (size_t i = 0; i < this->parameter_block_sizes().size(); ++i) {
+    //     if (jacobians[i] != nullptr) {
+    //         LOG(ERROR) << "Jacobian at index " << i << " is valid.";
+    //     } else {
+    //         LOG(ERROR) << "Jacobian at index " << i << " is nullptr.";
+    //     }
+    // }
+
+    // [3] velocity_bias 的雅可比
+    // residuals[0] = 
+    // (weight_ * (doppler_ - pt_.normalized().transpose() * (S_ItoG.matrix().transpose() * v_inG + linear_bias)));    
+    // Eigen::Vector3d J_v_b_ = - weight_ * pt_.normalized();
+    Eigen::RowVectorXd J_velocity_bias_copy_;
+    Eigen::Vector3d J_v_bias_ = - weight_ * pt_.normalized();
+    if(jacobians[2 * knot_num])
+    {
+      // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_velocity_bias_(jacobians[2 * knot_num]);
+       
+      LOG(ERROR) << "J_velocity_bias_ = " << ((jacobians[2 * knot_num] == nullptr)? "nullptr": "exist") << std::endl;
+      Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>> J_velocity_bias_(jacobians[2 * knot_num]);
+      // LOG(ERROR) << "J_velocity_bias_ = " << J_velocity_bias_ << std::endl;
+
+      // LOG(ERROR) << "J_velocity_rot_ after = " << ((jacobians[2 * knot_num - 1] == nullptr)? "nullptr": "exist") << std::endl;
+
+      // J_velocity_bias_.setZero();
+      // LOG(ERROR) << "J_v_b_ = " << J_v_b_.transpose() << std::endl;
+      // J_velocity_bias_ = (J_v_b_.transpose()).eval();
+      J_velocity_bias_ = (weight_ * J_v_bias_.transpose()).eval();
+      // LOG(ERROR) << "J_v_b_ = " << jacobians[2 * knot_num][0] << ", " 
+      //             << jacobians[2 * knot_num][1] << ", "
+      //             << jacobians[2 * knot_num][2] << ", "<< std::endl;
+      // LOG(ERROR) << "J_v_b_ = " << J_velocity_bias_ << std::endl;
+      // LOG(ERROR) << "J_v_b_ = " << J_velocity_bias_ << std::endl;
+
+      // Eigen::Matrix<double, 1, 3, Eigen::RowMajor> J_velocity_bias_copy_ = J_velocity_bias_;
+      J_velocity_bias_copy_ = J_velocity_bias_;
+      // LOG(ERROR) << "J_v_b_" << " = [\n" << J_velocity_bias_copy_ << "]\n";
+      LOG(ERROR) << "J_velocity_bias_copy_";
+      debug_ceres.debug_file << "J_v_bias_" << Output(J_v_bias_.transpose()) << std::endl;
+      debug_ceres.debug_file << "J_velocity_bias_ = " << Output(J_velocity_bias_) << std::endl;
+      debug_ceres_jacobis.debug_file << Output(J_velocity_bias_copy_) << "]\n";
+    }
+    else
+    {
+      LOG(ERROR) << "No Calculate Velocity Bias Jacobbi " << std::endl;
+    }
+
+    LOG(ERROR) << "No Calculate Velocity Bias Jacobbi " << std::endl;
+
+    // [4] timeoffset 本身无偏置,因此不用加入
+    // Eigen::Map<Eigen::Matrix<double, 1, 3>> J_timeoffset_(jacobians[knot_num + 2]);
+    // J_timeoffset_.setZero();
+    // J_timeoffset_ = J_v_b_;    
+
+    LOG(ERROR) << "DopplerFactor Evaluation Done" << std::endl;
+
+    LOG(ERROR) << "All Jacobi for Doppler factor" << std::endl;
+    debug_ceres.debug_file << "All Jacobi for Doppler factor " << std::endl;
+    debug_ceres.debug_file << "Jac_R_ = " << Output_M(Jac_R) << std::endl;
+    debug_ceres.debug_file << "J_p_ = " << Output_M(Jac_p) << std::endl;
+    debug_ceres.debug_file << "J_velocity_bias_ = " << Output(J_velocity_bias_copy_) << std::endl;
+
+    debug_ceres.debug_file << std::endl;
+    debug_ceres.Close();
+    debug_ceres_jacobis.Close();
+
+    LOG(ERROR) << "print close" << std::endl;
+
+    return true;
+  }
+
+private:
+    int64_t time_ns_;
+    Eigen::Vector3d pt_;
+    SplineMeta<SplineOrder> spline_meta_;
+    // Vec6d info_vec_;
+
+    //TODO: gravity is not necessary
+    // Eigen::Vector3d gravity;
+    double doppler_;
+    double weight_;
+
+    // Eigen::Vector3d J_v_d_;
+    // Eigen::Vector3d J_v_b_;
+};
+
