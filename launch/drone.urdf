@@ -1,0 +1,11 @@
+<robot name="airplane">
+  <link name="radar">
+    <visual>
+      <origin xyz="0.64 -0.61 -0.1" rpy="0 0 1.5708" />
+      <geometry>
+        <mesh filename="package://twist_estimator/launch/drone.dae" scale="10 10 10"/>
+      </geometry>
+    </visual>
+  </link>
+</robot>
+

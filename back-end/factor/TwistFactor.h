@@ -2417,10 +2417,6 @@ private:
 };
 
   
- 
- 
-
-
 // pixel_cord R_e_r v_r t_r_e normal_flow normal_norm
 // linear_bias gyro_ omega_bias
 class EventAgularFactor2 : public ceres::CostFunction, SplitSpineView{
@@ -3387,10 +3383,13 @@ public:
   NewDopplerFactor(int64_t time_ns, const Eigen::Vector3d& pt, 
             const double& doppler, 
             const SplineMeta<SplineOrder>& spline_segment_meta, // FEJ_STATE* global_fej_state_, no nned for fej
+            std::shared_ptr<FEJ_STATE> global_fej_state, bool use_fej,
             double weight, double w_weight = 0.05)// const Vec6d& info_vec)
       : time_ns_(time_ns),
         pt_(pt), doppler_(doppler),
         linear_spline_meta_(spline_segment_meta),
+        global_fej_state_(global_fej_state),
+        use_fej_(use_fej),
         weight_(weight), w_weight_(w_weight)
         // info_vec_(info_vec) 
         {
@@ -3421,7 +3420,7 @@ public:
 
     std::chrono::time_point<std::chrono::high_resolution_clock> time1;
 
-    LOG(ERROR) << "Evaluate DopplerFactor " << std::endl;
+    LOG(ERROR) << "Evaluate NewDopplerFactor " << std::endl;
 
     // 解析状态参数 parameters
     int knot_num = this->linear_spline_meta_.NumParameters();
@@ -3515,19 +3514,32 @@ public:
     std::chrono::time_point<std::chrono::high_resolution_clock> time2;
 
 
+    // double residuals_temp = weight_ * (doppler_ - pt_.normalized().dot(global_fej_state_->linear_velocity_ 
+    //                           + global_fej_state_->linear_bias_));
     double residuals_temp = weight_ * (doppler_ - pt_.normalized().dot(v_inG + linear_bias));
     residuals[0] = residuals_temp; // v_inG is in body
 
-    LOG(ERROR) << "Doppler residuals = " << residuals_temp << std::endl;
+    // LOG(ERROR) << "Doppler residuals = " << residuals_temp << std::endl;
 
-    // LOG(ERROR) << "Doppler residuals = " << residuals_temp << "\n"
-    //            << "weight_ = " << weight_ << "\n"
-    //            << "w_weight_ = " << w_weight_<< "\n"
-    //            << "doppler_ = " << doppler_ << "\n"
-    //            << "pt_.normalized() = " << Output(pt_.normalized()) << "\n"
-    //            << "v_inG = " << Output(v_inG) << "\n" 
-    //            << "linear_bias = " << Output(linear_bias) << "\n"  
-    //            << std::endl;
+    if(global_fej_state_ && use_fej_)
+    {
+      residuals_temp = weight_ * (doppler_ - pt_.normalized().dot(global_fej_state_->linear_velocity_ 
+                          + global_fej_state_->linear_bias_));
+
+      LOG(ERROR) << "doppler evaluation use fej:\n"
+                << "linear_velocity = " << Output(global_fej_state_->linear_velocity_) << "\n" 
+                << "linear_bias = " << Output(global_fej_state_->linear_bias_) << "\n"  
+                << std::endl;      
+    }
+
+    LOG(ERROR) << "Doppler residuals = " << residuals_temp << "\n"
+               << "weight_ = " << weight_ << "\n"
+               << "w_weight_ = " << w_weight_<< "\n"
+               << "doppler_ = " << doppler_ << "\n"
+               << "pt_.normalized() = " << Output(pt_.normalized()) << "\n"
+               << "v_inG = " << Output(v_inG) << "\n" 
+               << "linear_bias = " << Output(linear_bias) << "\n"  
+               << std::endl;
 
     // LOG(ERROR) << "Doppler Loss: " << ((residuals_temp > 0.3)? "True": "False") << std::endl;          
 
@@ -3888,6 +3900,11 @@ public:
     // debug_ceres.debug_file << "J_p_ = " << Output_M(Jac_p) << std::endl;
     // debug_ceres.debug_file << "J_velocity_bias_ = " << Output(J_velocity_bias_copy_) << std::endl;
 
+    // LOG(ERROR) << "All Jacobi for Doppler factor" << std::endl;
+    // // LOG(ERROR) << "Jac_R_ = " << Output_M(Jac_R) << std::endl;
+    // LOG(ERROR) << "J_p_ = " << Output_M(Jac_p) << std::endl;
+    // LOG(ERROR) << "J_velocity_bias_ = " << Output(J_velocity_bias_copy_) << std::endl;
+
     /*
     LOG(ERROR) << "Jac_p = " << Jac_p << std::endl;
     LOG(ERROR) << "J_velocity_bias_copy_ = " << J_velocity_bias_copy_ << std::endl;
@@ -3935,6 +3952,9 @@ private:
     // 某些参数的弱优化权重
     double w_weight_;
 
+    std::shared_ptr<FEJ_STATE> global_fej_state_;
+    bool use_fej_;
+
     // Eigen::Vector3d J_v_d_;
     // Eigen::Vector3d J_v_b_;
 };
@@ -3954,7 +3974,9 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
   using SO3d = Sophus::SO3<double>;
 
   EventAgularFactor4(int64_t time_ns, const Eigen::Vector3d pt, 
-            const event_flow_velocity flow, 
+            // const event_flow_velocity flow,
+            Eigen::Vector3d normal_flow,
+            double normal_norm,
             const Eigen::Vector3d doppler_velocity,
             const Eigen::Quaterniond q_e_r, const Eigen::Vector3d t_e_r,
             const SplineMeta<SplineOrder>& linear_spline_segment_meta,
@@ -3963,7 +3985,9 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
             // const Eigen::Vector3d linear_bias, const Eigen::Vector3d angular_bias,
             double weight, double w_weight = 0.05) // const Vec6d& info_vec)
       : time_ns_(time_ns),
-        pixel_cord(pt), doppler_velocity_(doppler_velocity),
+        pixel_cord(pt), normal_norm_(normal_norm),
+        normal_flow_(normal_flow),
+        doppler_velocity_(doppler_velocity),
         q_e_r(q_e_r), t_e_r(t_e_r),
         linear_spline_meta_(linear_spline_segment_meta),
         angular_spline_meta_(angular_spline_segment_meta),
@@ -3978,7 +4002,7 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
 
           size_t knot_num = this->angular_spline_meta_.NumParameters();
           // LOG(ERROR) << "knot_num = " << knot_num << std::endl;
-          flow_ << flow.x, flow.y, 0.0;
+          // flow_ << flow.x, flow.y, 0.0;
 
           for (size_t i = 0; i < knot_num; ++i) {
             mutable_parameter_block_sizes()->push_back(3);   // linear velocity
@@ -4001,7 +4025,7 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
 
         std::chrono::time_point<std::chrono::high_resolution_clock> time1;
 
-        LOG(ERROR) << "Evaluate EventAgularFactor3 " << std::endl;
+        LOG(ERROR) << "Evaluate EventAgularFactor4 " << std::endl;
         // debug_ceres.Open();
         // debug_ceres.debug_file << std::endl;
         // debug_ceres.debug_file << "    ---------------------- Evaluate BodyLocalAngularVelocityFactor ------------------    " << std::endl;
@@ -4077,10 +4101,37 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         //                               << "\n angular_bias = [" <<  Output(angular_bias) << "] " << std::endl;
 
       // 3-18 修改 法向光流的计算
-      Eigen::Vector3d grad;
-      grad << -1.0 / flow_(0), -1.0 / flow_(1), 0.0;
-      double normal_norm = 1.0 / grad.norm();
-      Eigen::Vector3d normal_flow = grad * normal_norm;
+      // Eigen::Vector3d grad;
+      // grad << -1.0 / flow_(0), -1.0 / flow_(1), 0.0;
+      // double normal_norm = 1.0 / grad.norm();
+      // Eigen::Vector3d normal_flow = grad * normal_norm;
+
+      // 10-8 修改 法向光流的计算
+      // Eigen::Vector3d normal_flow;
+      // double normal_norm;
+      /*
+      {
+        const auto plane = plane_;
+        
+        // double norm_grad = sqrt(plane(0) * plane(0) + plane(1) * plane(1)); //  a* a + b* b
+        normal_flow <<  plane(0), plane(1), 0.0;
+        double norm_grad = normal_flow.norm();
+        normal_flow = normal_flow / norm_grad;     // grad / grad.norm();
+        normal_norm = - plane(2) / norm_grad;
+        Eigen::Vector3d flow = normal_norm * normal_flow;
+
+        Eigen::Matrix3d K_inv = K.inverse();
+        // 上面的像素光流需要转到相机系下光流
+        double focal_len_inv = (K_inv(0,0) + K_inv(1,1)) / 2;
+        LOG(ERROR) << "focal_len_inv = " << focal_len_inv << std::endl;
+        normal_norm *= focal_len_inv;
+        LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
+      }*/
+      
+      // normal_flow = flow_.cwiseAbs2() / flow_.squaredNorm();
+      // normal_norm = normal_flow.norm();
+      // normal_flow = normal_flow / normal_norm;
+
 
       Eigen::Map<Vec3d const> linear_bias_(parameters[2 * knot_num]);
       Eigen::Map<Vec3d const> omega_bias_(parameters[2 * knot_num + 1]);
@@ -4092,7 +4143,11 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
       // 保留线速度估计 + bias的优化
       Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((vel_ + linear_bias_) + (gyro_ + R_e_r * omega_bias_).cross(t_r_e)));      
       // use for transport
-      double post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias_);
+      // double post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias_);
+      double post_vec = normal_norm_ + normal_flow_.transpose() * Skew(pixel_cord) * (R_e_r.transpose() * gyro_ + omega_bias_);
+
+      if(pre_vec.norm() < 1e-3)
+        pre_vec = Eigen::Vector3d::Identity();
 
       // 保留bias的优化
       // Eigen::Vector3d pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((doppler_velocity_ + linear_bias) + (gyro_ + R_e_r * omega_bias).cross(t_r_e)));      
@@ -4130,22 +4185,22 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         // LOG(ERROR) << "local angular velocity residuals = " 
         //                         << (residual) << std::endl;
 
-        // LOG(ERROR) << "Event Details: weight_ = " << weight_ 
-        //             << "\n w_weight_ = " <<  w_weight_
-        //             << "\n pixel_cord = " <<  Output_M(pixel_cord)
-        //             << "\n flow_ = " <<  Output(flow_)
-        //             << "\n doppler_velocity_ = " <<  Output(doppler_velocity_)
-        //             << "\n vel_ = " <<  Output(vel_)
-        //             //  << "\n linear_bias = " <<  Output(linear_bias)
-        //             << "\n R_e_r = " <<  Output_M(R_e_r)
-        //             << "\n t_r_e = " << Output(t_r_e.transpose()) 
-        //             << "\n gyro_ = " <<  Output(gyro_) 
-        //             << "\n normal_norm = " <<  normal_norm 
-        //             << "\n normal_flow = " <<  Output(normal_flow) 
-        //             << "\n linear_bias_ = " <<  Output(linear_bias_) 
-        //             << "\n omega_bias_ = " <<  Output(omega_bias_) 
-        //             //  << "\n omega_bias = " <<  Output(omega_bias) 
-        //             << std::endl;
+        LOG(ERROR) << "Event Details: weight_ = " << weight_ 
+                    << "\n w_weight_ = " <<  w_weight_
+                    << "\n pixel_cord = " <<  Output_M(pixel_cord)
+                    // << "\n flow_ = " <<  Output(flow_)
+                    << "\n doppler_velocity_ = " <<  Output(doppler_velocity_)
+                    << "\n vel_ = " <<  Output(vel_)
+                    //  << "\n linear_bias = " <<  Output(linear_bias)
+                    << "\n R_e_r = " <<  Output_M(R_e_r)
+                    << "\n t_r_e = " << Output(t_r_e.transpose()) 
+                    << "\n gyro_ = " <<  Output(gyro_) 
+                    << "\n normal_norm_ = " <<  normal_norm_ 
+                    << "\n normal_flow_ = " <<  Output(normal_flow_) 
+                    << "\n linear_bias_ = " <<  Output(linear_bias_) 
+                    << "\n omega_bias_ = " <<  Output(omega_bias_) 
+                    //  << "\n omega_bias = " <<  Output(omega_bias) 
+                    << std::endl;
         LOG(ERROR) << "pre_vec = " << Output(pre_vec)
                   << "\n post_vec = " << post_vec << std::endl;
 
@@ -4164,11 +4219,11 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         /*if(global_fej_state_)
         {
           LOG(ERROR) << "Use fej state = \n"
-                 << << global_fej_state_-> << "\n"
+                 << "linear_velocity_ = "<< global_fej_state_->linear_velocity_ << "\n"
                 << "doppler_ = " << doppler_ << "\n"
                 << "pt_.normalized() = " << Output(pt_.normalized()) << "\n"
                 << "v_inG = " << Output(v_inG) << "\n" 
-                << "linear_bias = " << Output(linear_bias) << "\n"  
+                << "linear_bias = " << Output(global_fej_state_->linear_bias_) << "\n"  
                 << std::endl;
         }*/
 
@@ -4200,9 +4255,14 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
           pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((global_fej_state_->linear_velocity_
                      + global_fej_state_->linear_bias_) + (global_fej_state_->angular_velocity_ 
                      + R_e_r * global_fej_state_->angular_bias_).cross(t_r_e)));      
-          post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() 
+          post_vec = normal_norm_ + normal_flow_.transpose() * Skew(pixel_cord) * (R_e_r.transpose() 
                       * global_fej_state_->angular_velocity_ + global_fej_state_->angular_bias_);
-          
+
+          LOG(ERROR) << "FEJ STATE:\n linear velocity = " << Output(global_fej_state_->linear_velocity_)
+                  << "\n linear bias = " << Output(global_fej_state_->linear_bias_) 
+                  << "\n angular velocity = " << Output(global_fej_state_->angular_velocity_) 
+                  << "\n angular bias = " << Output(global_fej_state_->angular_bias_) 
+                  << std::endl;          
           LOG(ERROR) << "FEJ: pre_vec = " << Output(pre_vec)
                   << "\n FEJ: post_vec = " << post_vec << std::endl;
         }
@@ -4281,7 +4341,7 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         // LOG(ERROR) << "Add jacobians for Position control point " << std::endl;  
  
         Eigen::Matrix3d Jac_gyro_pre = - Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e);
-        Eigen::RowVector3d Jac_gyro_post = normal_flow.transpose() * Skew(pixel_cord) * R_e_r.transpose();
+        Eigen::RowVector3d Jac_gyro_post = normal_flow_.transpose() * Skew(pixel_cord) * R_e_r.transpose();
         Eigen::Matrix<double, 12, 3> Jac_w;
         for (size_t i = 0; i < knot_num; i++) {
           size_t idx = i + knot_num;
@@ -4346,7 +4406,7 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
 
         // [3] 对 angular_bias 的 雅可比
         Eigen::Matrix3d Jac_omega_bias_pre_ = - Skew(pixel_cord) * R_e_r.transpose() * Skew(t_r_e) * R_e_r;
-        Eigen::RowVector3d Jac_omega_bias_post_ = normal_flow.transpose() * Skew(pixel_cord);
+        Eigen::RowVector3d Jac_omega_bias_post_ = normal_flow_.transpose() * Skew(pixel_cord);
 
         // Eigen::Matrix3d Jac_omega_bias_ = Jac_omega_bias_pre_ * post_vec + pre_vec * Jac_omega_bias_post_;
         Eigen::Matrix3d Jac_omega_bias_ = pre_vec * Jac_omega_bias_post_;
@@ -4379,7 +4439,7 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         // debug_ceres.debug_file << "Jac_p_ = " << Output_M(Jac_p) << std::endl;
         // debug_ceres.debug_file << "J_angular_bias_ = " << Output_M(Jac_w_bias) << std::endl;
 
-        
+        // LOG(ERROR) << "All Jacobi for EventAngular4 factor" << std::endl;
         // LOG(ERROR) << "Jac_v = " << Output_M(Jac_v) << std::endl;
         // LOG(ERROR) << "Jac_w = " << Output_M(Jac_w) << std::endl;
         // LOG(ERROR) << "J_linear_bias_ = " << Output_M(J_linear_bias_copy) << std::endl;
@@ -4397,7 +4457,9 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
 private:
     int64_t time_ns_;
     Eigen::Vector3d pixel_cord;
-    Eigen::Vector3d flow_;
+    // Eigen::Vector3d flow_;
+    Eigen::Vector3d normal_flow_;
+    double normal_norm_;
     Eigen::Vector3d doppler_velocity_;
     Eigen::Quaterniond q_e_r;
     Eigen::Vector3d t_e_r;
@@ -4849,3 +4911,249 @@ private:
     // 某些参数的弱优化权重
     double w_weight_;
 };
+
+
+class ImuFactor : public ceres::CostFunction, SplitSpineView{
+ public:
+ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  using SO3View = So3SplineView;
+  using R3View = RdSplineView;
+  using SplitView = SplitSpineView;
+
+  using Vec3d = Eigen::Matrix<double, 3, 1>;
+  using Vec6d = Eigen::Matrix<double, 6, 1>;
+  using Mat3d = Eigen::Matrix<double, 3, 3>;
+  using Quatd = Eigen::Quaterniond;
+  using SO3d = Sophus::SO3<double>;
+
+  // Ri 旋转矩阵起点
+  // 线速度
+  // 角速度
+
+  ImuFactor(int64_t time_ns, const Eigen::Matrix3d& Ri_in_world, 
+            const Eigen::Vector3d& imu_acc,
+            const Eigen::Vector3d& imu_gyr,
+            // const Eigen::Vector3d& acc_bias,     // 与doppler bias 没有联系
+            // const Eigen::Vector3d& gyro_bias,
+            // const Eigen::Vector3d& gravity,
+            const double* time_offset,
+            const SplineMeta<SplineOrder>& linear_spline_segment_meta,
+            const SplineMeta<SplineOrder>& angular_spline_segment_meta,
+            std::shared_ptr<FEJ_STATE> global_fej_state, bool use_fej,
+            // const Eigen::Vector3d linear_bias, const Eigen::Vector3d angular_bias,
+            double weight, double w_weight = 0.05) // const Vec6d& info_vec)
+      : time_ns_(time_ns), Ri_in_world_(Ri_in_world_),
+        imu_acc_(imu_acc), imu_gyr_(imu_gyr),
+        // acc_bias_(acc_bias), gyro_bias_(gyro_bias),
+        // g_(gravity), 
+        time_offset_(*time_offset),
+        linear_spline_meta_(linear_spline_segment_meta),
+        angular_spline_meta_(angular_spline_segment_meta),
+        global_fej_state_(global_fej_state),
+        use_fej_(use_fej),
+        // linear_bias_(linear_bias), omega_bias_(angular_bias),
+        lock_extrincs(true),      // HAO TODO: 暂时不优化外参
+        weight_(weight), w_weight_(w_weight)
+        {
+          // set_num_residuals(1);           // 定义残差值的大小(事件角速度残差)
+          set_num_residuals(6);           // 定义残差值的大小(事件角速度残差)
+
+          size_t knot_num = this->angular_spline_meta_.NumParameters();
+
+          for (size_t i = 0; i < knot_num; ++i) {
+            mutable_parameter_block_sizes()->push_back(3);   // linear velocity
+          }
+
+          // TODO: 需要角速度曲线              
+          for (size_t i = 0; i < knot_num; ++i) {
+            mutable_parameter_block_sizes()->push_back(3);   // angular velocity
+          }
+
+          mutable_parameter_block_sizes()->push_back(3);    // acc bias
+          
+          mutable_parameter_block_sizes()->push_back(3);    // gyo bias
+
+          mutable_parameter_block_sizes()->push_back(3);    // gravity
+        }
+
+  virtual bool Evaluate(double const* const* parameters, double* residuals,
+                          double** jacobians) const {
+        // typename R3View::JacobianStruct J_v_;
+        typename R3View::JacobianStruct J_a_;
+        typename R3View::JacobianStruct J_w_;
+
+        std::chrono::time_point<std::chrono::high_resolution_clock> time1;
+
+        LOG(ERROR) << "Evaluate Imu " << std::endl;
+        // debug_ceres.Open();
+        // debug_ceres.debug_file << std::endl;
+        // debug_ceres.debug_file << "    ---------------------- Evaluate BodyLocalAngularVelocityFactor ------------------    " << std::endl;
+
+        size_t knot_num = angular_spline_meta_.NumParameters();
+
+        // double time_offset_in_ns = parameters[t_offset_index][0];
+        double time_offset_in_ns = 0;
+        int64_t t_corrected = time_ns_ + (int64_t)time_offset_in_ns;
+        t_corrected = std::min(t_corrected, angular_spline_meta_.segments.at(0).MaxTimeNs() - 1);
+        t_corrected = std::max(t_corrected, angular_spline_meta_.segments.at(0).MinTimeNs() + 1);
+  
+        // Eigen::Vector3d vel_, gyro_, rot_accel;
+        Eigen::Vector3d acc_, gyro_, rot_accel;
+        if (jacobians){
+          acc_ = R3View::evaluate(t_corrected,
+                                        linear_spline_meta_.segments.at(0),
+                                        parameters, &J_a_); 
+
+          gyro_ = R3View::evaluate(t_corrected,
+                                        angular_spline_meta_.segments.at(0),
+                                        parameters + knot_num, &J_w_);   
+        }else{
+          acc_ = R3View::evaluate(t_corrected,
+                                        linear_spline_meta_.segments.at(0),
+                                        parameters, nullptr); 
+
+          gyro_ = R3View::evaluate(t_corrected,
+                                        angular_spline_meta_.segments.at(0),
+                                        parameters + knot_num, nullptr);  
+        }
+
+        Eigen::Map<Vec3d const> acc_bias_(parameters[2 * knot_num]);
+        Eigen::Map<Vec3d const> gyro_bias_(parameters[2 * knot_num + 1]);
+        Eigen::Map<Vec3d const> g_(parameters[2 * knot_num + 2]);
+
+      Eigen::Map<Eigen::Matrix<double,6,1>> residual(residuals);
+      residual.setZero();
+      residual.block<3,1>(0,0) = acc_ - (Ri_in_world_ * (imu_acc_ - acc_bias_) - g_);
+      residual.block<3,1>(3,0) = gyro_ - (imu_gyr_  - gyro_bias_);
+
+      // Ri_in_world = Utility::deltaQ(un_gyr * dt).toRotationMatrix();
+
+      residual = (weight_ * residual).eval();
+
+      // 不评估雅可比就返回
+      if (!jacobians) {
+        // LOG(ERROR) << "BodyLocalAngularVelocityFactor No J" << std::endl;
+        // debug_ceres.debug_file << "BodyLocalAngularVelocityFactor No Jacobi!" << std::endl;
+        // debug_ceres.Close();
+
+        // // debug_ceres_jacobis.Close();
+        return true;
+      }
+
+      // 加入FEJ状态
+      /*if(global_fej_state_ && use_fej_)
+      {
+        pre_vec = Skew(pixel_cord) * (R_e_r.transpose() * ((global_fej_state_->linear_velocity_
+                    + global_fej_state_->linear_bias_) + (global_fej_state_->angular_velocity_ 
+                    + R_e_r * global_fej_state_->angular_bias_).cross(t_r_e)));      
+        post_vec = normal_norm + normal_flow.transpose() * Skew(pixel_cord) * (R_e_r.transpose() 
+                    * global_fej_state_->angular_velocity_ + global_fej_state_->angular_bias_);
+        
+        LOG(ERROR) << "FEJ: pre_vec = " << Output(pre_vec)
+                << "\n FEJ: post_vec = " << post_vec << std::endl;
+      }  */
+      /*if(global_fej_state_)
+      {
+        LOG(ERROR) << "Use fej state = \n"
+                << << global_fej_state_-> << "\n"
+              << "doppler_ = " << doppler_ << "\n"
+              << "pt_.normalized() = " << Output(pt_.normalized()) << "\n"
+              << "v_inG = " << Output(v_inG) << "\n" 
+              << "linear_bias = " << Output(linear_bias) << "\n"  
+              << std::endl;
+      }*/
+
+      LOG(ERROR) << "local imu residuals = " 
+                              << Output_M(residual) << std::endl;
+      LOG(ERROR) << "local imu residuals norm = " 
+                              << residual.norm() << std::endl;
+      // LOG(ERROR) << "Event Loss: " << ((residual.norm() > 0.3)? "True": "False") << std::endl; 
+
+      std::fstream imu_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_res.txt",
+                                std::ios::out | std::ios::app);
+      // angular_file << Output_M(residual) << std::endl;
+      imu_file << residual.norm() << std::endl;
+      imu_file.close();
+
+
+      std::chrono::time_point<std::chrono::high_resolution_clock> time3;
+
+      Eigen::Matrix3d iden_matrix;
+      iden_matrix.setIdentity();
+      // 加速度
+      Eigen::Matrix<double, 12, 3> Jac_a;
+      for (size_t i = 0; i < knot_num; i++) {
+        size_t idx = i;
+        if (jacobians[idx]) {
+          Eigen::Map<Eigen::Matrix3d> jac_kont_a(
+              jacobians[idx]);
+          jac_kont_a.setZero();
+          Eigen::Matrix3d jac_a = iden_matrix * J_a_.d_val_d_knot[i];
+          jac_kont_a = (weight_ * jac_a).eval();
+        }
+      }
+
+      // 角速度
+      for (size_t i = knot_num; i < 2 * knot_num; i++) {
+        size_t idx = i;
+        if (jacobians[idx]) {
+          Eigen::Map<Eigen::Matrix3d> jac_kont_w(
+              jacobians[idx]);
+          jac_kont_w.setZero();
+          Eigen::Matrix3d jac_w = iden_matrix * J_w_.d_val_d_knot[i - knot_num];
+          jac_kont_w = (weight_ * jac_w).eval();
+        }
+      }
+      
+      // 加速度偏置
+      if(jacobians[2 * knot_num])
+      {
+        Eigen::Map<Eigen::Matrix<double, 3, 3>> J_acc_bias_(jacobians[2 * knot_num]); 
+        J_acc_bias_.setZero();
+        J_acc_bias_ = (weight_ * Ri_in_world_).eval(); 
+      }
+
+      // 角速度偏置
+      if(jacobians[2 * knot_num + 1])
+      {
+        Eigen::Map<Eigen::Matrix<double, 3, 3>> J_gyr_bias_(jacobians[2 * knot_num + 1]);
+        J_gyr_bias_.setZero(); 
+
+        J_gyr_bias_ = (weight_ * Ri_in_world_).eval(); 
+      }
+
+      // 重力
+      if(jacobians[2 * knot_num + 2])
+      {
+        Eigen::Map<Eigen::Matrix<double, 3, 3>> J_grav_(jacobians[2 * knot_num + 2]);
+        J_grav_.setIdentity(); 
+      }
+
+  
+      return true;
+    }
+  
+private:
+    int64_t time_ns_;
+
+    const Eigen::Matrix3d Ri_in_world_; 
+    const Eigen::Vector3d imu_acc_;
+    const Eigen::Vector3d imu_gyr_;
+    // const Eigen::Vector3d acc_bias_;     // 与doppler bias 没有联系
+    // const Eigen::Vector3d gyro_bias_;
+    // const Eigen::Vector3d g_;
+    const double time_offset_;
+
+    SplineMeta<SplineOrder> linear_spline_meta_;
+    SplineMeta<SplineOrder> angular_spline_meta_;
+    // Vec6d info_vec_;
+    // Eigen::Vector3d linear_bias_;
+    // Eigen::Vector3d omega_bias_;
+    bool lock_extrincs;
+    std::shared_ptr<FEJ_STATE> global_fej_state_;
+    bool use_fej_;
+    double weight_;
+    // 某些参数的弱优化权重
+    double w_weight_;
+};  // ImuFactor
+

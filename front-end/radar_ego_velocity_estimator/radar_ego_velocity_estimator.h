@@ -239,6 +239,7 @@ private:
     ROS_INFO_STREAM(kPrefix << "Number of Ransac iterations: " << ransac_iter_);
     std::fstream radar_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler.debug", std::ios::out | std::ios::app);
     radar_file << "ransac_iter_ = " << ransac_iter_ << std::endl;
+    radar_file.flush();
     radar_file.close();
 
   }

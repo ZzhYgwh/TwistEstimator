@@ -1,1 +1,0 @@
-/home/hao/Desktop/twist_ws/src/TwistEstimator/devel/.private/catkin_tools_prebuild/local_setup.sh

@@ -1041,7 +1041,9 @@ public:
 
 
             LOG(ERROR) << "Final Debug for flow: " << best_inliers.size() << std::endl;
-            twist_result2_.push_back(TwistData2(twist_, cur_inliers, best_inliers, flow_pre_points));
+            std::vector<Eigen::Vector3d> normal_flows;
+            std::vector<double> normal_norms;
+            twist_result2_.push_back(TwistData2(twist_, cur_inliers, best_inliers, flow_pre_points, normal_flows, normal_norms));
 
         }
 

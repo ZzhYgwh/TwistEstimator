@@ -25,7 +25,10 @@ public:
     // 添加事件（更新时间表面）
     void addEvent(const dvs_msgs::Event& e) {
         if (isInside(e.x, e.y))
-            sae_[e.polarity].at<double>(e.y, e.x) = e.ts.toSec();
+        {
+            // if(sae_[e.polarity].at<double>(e.y, e.x) < e.ts.toSec())
+                sae_[e.polarity].at<double>(e.y, e.x) = e.ts.toSec();
+        }
     }
 
     // 获取某像素最近事件时间
@@ -35,9 +38,14 @@ public:
     }
 
     // 获取整张 SAE（0 = OFF, 1 = ON）
-    const cv::Mat& getSAE(bool polarity) const {
+    // const cv::Mat& getSAE(bool polarity) const {
+    //     return sae_[polarity];
+    // }
+
+    cv::Mat& getSAE(bool polarity) {
         return sae_[polarity];
     }
+
 
     // 清空 SAE
     void clear() {
@@ -65,7 +73,7 @@ public:
             }
         }
         // LOG(ERROR) << "latestTime = " << latestTime << ", minTime = " << minTime << std::endl;
-        for (int y = 0; y < saeTimeSurface.rows; ++y) {
+        /*for (int y = 0; y < saeTimeSurface.rows; ++y) {
             for (int x = 0; x < saeTimeSurface.cols; ++x) {
                 double eventTime = saeTimeSurface.at<double>(y, x);
                 if(eventTime < 0.1) // 特别的 没有事件
@@ -85,6 +93,48 @@ public:
                     // LOG(ERROR) << "maxTimeSec = " << maxTimeSec << std::endl;
                     // LOG(ERROR) << "val = " << val << std::endl;
                     decayed.at<double>(y, x) = val;
+
+                    LOG(ERROR) << "val = " << val;
+                    LOG(ERROR) << "dt = " << dt;
+
+                    // 使用真实时间
+                    decayed.at<double>(y, x) = -dt;
+                    // decayed.at<double>(y, x) = dt;
+                }
+            }
+        }*/
+        double total_dt = latestTime - minTime;
+        for (int y = 0; y < saeTimeSurface.rows; ++y) {
+            for (int x = 0; x < saeTimeSurface.cols; ++x) {
+                double eventTime = saeTimeSurface.at<double>(y, x);
+                if(eventTime < 0.1) // 特别的 没有事件
+                {
+                    decayed.at<double>(y, x) = 0.0;
+                    continue;
+                }
+                // double dt = latestTime - eventTime;
+                double dt = eventTime - minTime;
+                // LOG(ERROR) << "latestTime = " << latestTime << std::endl;
+                // LOG(ERROR) << "eventTime = " << eventTime << std::endl;
+                // if (dt < 0 || dt > maxTimeSec) {
+                if (dt < 0 || dt < total_dt - maxTimeSec) {
+                    decayed.at<double>(y, x) = 0.0;  // 超过2秒或未来事件置0
+                } else {
+                    // 指数衰减，衰减速率根据 maxTimeSec 调节
+                    // double val = std::exp(-dt / maxTimeSec);
+                    // LOG(ERROR) << "dt = " << dt << std::endl;
+                    // LOG(ERROR) << "maxTimeSec = " << maxTimeSec << std::endl;
+                    // LOG(ERROR) << "val = " << val << std::endl;
+                    // decayed.at<double>(y, x) = val;
+
+                    // LOG(ERROR) << "val = " << val;
+                    // LOG(ERROR) << "dt = " << dt;
+
+                    // LOG(ERROR) << "eventTime = " << std::setprecision(18) << dt << std::endl;
+
+                    // 使用真实时间
+                    decayed.at<double>(y, x) = dt;
+                    // decayed.at<double>(y, x) = dt;
                 }
             }
         }

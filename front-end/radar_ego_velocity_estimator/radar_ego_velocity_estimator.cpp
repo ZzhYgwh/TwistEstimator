@@ -72,7 +72,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
   auto radar_scan_outlier(new pcl::PointCloud<RadarPointCloudType>);
 
   std::fstream  radar_file;
-  // radar_file.open("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler.debug", std::ios::out | std::ios::app);
+  radar_file.open("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler.debug", std::ios::out | std::ios::app);
   // radar_file << "---------------- Radar Doppler ----------------" << std::endl;
 
   bool success = false;
@@ -97,19 +97,19 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
 
 
       // 假设这是一个 C++ 函数内部
-      // // radar_file << std::fixed << std::setprecision(2);
-      // // radar_file << "r: " << r << " (range)" << std::endl;
-      // // radar_file << "config_.min_dist: " << config_.min_dist << std::endl;
-      // // radar_file << "config_.max_dist: " << config_.max_dist << std::endl;
+      radar_file << std::fixed << std::setprecision(2);
+      radar_file << "r: " << r << " (range)" << std::endl;
+      radar_file << "config_.min_dist: " << config_.min_dist << std::endl;
+      radar_file << "config_.max_dist: " << config_.max_dist << std::endl;
 
-      // // radar_file << "target.intensity: " << target.intensity << std::endl;
-      // // radar_file << "config_.min_db: " << config_.min_db << std::endl;
+      radar_file << "target.intensity: " << target.intensity << std::endl;
+      radar_file << "config_.min_db: " << config_.min_db << std::endl;
 
-      // // radar_file << "azimuth: " << azimuth << " rad, threshold: "
-      //           << angles::from_degrees(config_.azimuth_thresh_deg) << " rad" << std::endl;
+      radar_file << "azimuth: " << azimuth << " rad, threshold: "
+                << angles::from_degrees(config_.azimuth_thresh_deg) << " rad" << std::endl;
 
-      // // radar_file << "elevation: " << elevation << " rad, threshold: "
-      //           << angles::from_degrees(config_.elevation_thresh_deg) << " rad" << std::endl;
+      radar_file << "elevation: " << elevation << " rad, threshold: "
+                << angles::from_degrees(config_.elevation_thresh_deg) << " rad" << std::endl;
 
       // // radar_file << ((r > config_.min_dist && r < config_.max_dist && target.intensity > config_.min_db &&
       //     std::fabs(azimuth) < angles::from_degrees(config_.azimuth_thresh_deg) &&
@@ -124,11 +124,16 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
                 r, azimuth, elevation, target.x / r, target.y / r, target.z / r;
         valid_targets.emplace_back(v_pt);
       }
-      // else{
+      /*else{
       //   cout << (r > config_.min_dist) << (r < config_.max_dist) << (target.intensity > config_.min_db) << \
       //   (std::fabs(azimuth) < angles::from_degrees(config_.azimuth_thresh_deg)) << (std::fabs(elevation) < angles::from_degrees(config_.elevation_thresh_deg)) << \
       //   " " << angles::to_degrees(azimuth) << " " << angles::to_degrees(elevation) << endl;
-      // }
+        radar_file << ((r > config_.min_dist && r < config_.max_dist && target.intensity > config_.min_db &&
+          std::fabs(azimuth) < angles::from_degrees(config_.azimuth_thresh_deg) &&
+          std::fabs(elevation) < angles::from_degrees(config_.elevation_thresh_deg))? "True":"False") << std::endl;
+      
+      
+      }*/
     }
     // radar_file.close();
     // ROS_INFO("valid_targets = %d", valid_targets.size());
@@ -142,10 +147,10 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       std::nth_element(v_dopplers.begin(), v_dopplers.begin() + n, v_dopplers.end());
       const auto median = v_dopplers[n];
 
-      radar_file.open("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler.debug", std::ios::out | std::ios::app);
+      // radar_file.open("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler.debug", std::ios::out | std::ios::app);
       // radar_file << "median = " << median << ", config_.thresh_zero_velocity = " << config_.thresh_zero_velocity << std::endl;
 
-
+      radar_file << "median = " << median << ", config_.thresh_zero_velocity = " << config_.thresh_zero_velocity << std::endl;
       // ROS_INFO("checkout zero velocity = %f, actually = %f", config_.thresh_zero_velocity, median);      
       if (median < config_.thresh_zero_velocity)
       {
@@ -170,6 +175,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
         
         if (config_.use_ransac)
         {
+          radar_file << "use_ransac" << std::endl;
           std::vector<uint> inlier_idx_best;
           std::vector<uint> outlier_idx_best;
           success = solve3DFullRansac(radar_data, v_r, sigma_v_r, inlier_idx_best, outlier_idx_best);
@@ -178,6 +184,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
             radar_scan_inlier->push_back(toRadarPointCloudType(valid_targets.at(idx), idx_));
           for (const auto& idx : outlier_idx_best)
             radar_scan_outlier->push_back(toRadarPointCloudType(valid_targets.at(idx), idx_));
+          radar_file << "success = " << ((success)? "True" : "False") << std::endl;
           radar_file << "v_r = " << v_r << ", v_r_norm = " << v_r.norm() << ", inlier_idx_best.size = " << inlier_idx_best.size()
               << ", outlier_idx_best.size = " << outlier_idx_best.size() << std::endl;
         }
@@ -233,22 +240,27 @@ bool RadarEgoVelocityEstimator::solve3DFullRansac(const Matrix& radar_data,
   std::random_device rd;
   std::mt19937 g(rd());
   std::fstream doppler_ransac("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler_ransac.debug", std::ios::out | std::ios::app);
+  doppler_ransac << "radar_data.rows() = " << radar_data.rows() << "config_.N_ransac_points = " << config_.N_ransac_points << std::endl;
   if (radar_data.rows() >= config_.N_ransac_points)
   {
+    doppler_ransac << "ransac_iter_ = " << ransac_iter_ << std::endl;
     for (uint k = 0; k < ransac_iter_; ++k)
     {
       std::shuffle(idx.begin(), idx.end(), g);
       Matrix radar_data_iter;
       radar_data_iter.resize(config_.N_ransac_points, 4);
-      // doppler_ransac << "config_.N_ransac_points = " << config_.N_ransac_points << std::endl;
+      
       for (uint i = 0; i < config_.N_ransac_points; ++i) radar_data_iter.row(i) = radar_data.row(idx.at(i));
       bool rtn = solve3DFull(radar_data_iter, v_r, sigma_v_r, false);
-      if (rtn == false) ROS_INFO("Failure at solve3DFullRansac() 1");
+      if (rtn == false) {
+        ROS_INFO("Failure at solve3DFullRansac() 1");
+        doppler_ransac << "Failure at solve3DFullRansac() 1" << std::endl;
+      }
       if (rtn)
       {
-        // doppler_ransac << "y_all = " << y_all.transpose() << std::endl;
-        // doppler_ransac << "H_all = " << H_all << std::endl;
-        // doppler_ransac << "v_r = " << v_r.transpose() << std::endl;
+        doppler_ransac << "y_all = " << y_all.transpose() << std::endl;
+        doppler_ransac << "H_all = " << H_all << std::endl;
+        doppler_ransac << "v_r = " << v_r.transpose() << std::endl;
         const Vector err = (y_all - H_all * v_r).array().abs();
         std::vector<uint> inlier_idx;
         std::vector<uint> outlier_idx;

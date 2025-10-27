@@ -364,7 +364,6 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
   //       }
   //   }
 
-
   bool success = false;
   pcl::fromROSMsg (radar_scan_msg, *radar_scan);
   file << "radar_scan.size = " << radar_scan->size() << std::endl;

@@ -1726,7 +1726,9 @@ void EvaluateCostFunctionWithJacobians(
 
 void TrajectoryEstimator2::AddDopplerMeasurementAnalytic2(
   double timestamp, const Eigen::Vector3d& point, double* linear_bias,
-  const double& doppler, const Eigen::Matrix3d R_e_r, bool use_order_opti,
+  const double& doppler, const Eigen::Matrix3d R_e_r, 
+  std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, 
+  bool use_order_opti,
   double weight, double linear_w_weight, bool marg_this_factor)
 {
 
@@ -1749,7 +1751,8 @@ void TrajectoryEstimator2::AddDopplerMeasurementAnalytic2(
   //     R_e_r, linear_spline_meta, weight, 0.00005);
 
   new Functor(time_ns, point, - 1.0 * doppler,  // doppler 需要 取反
-      linear_spline_meta, weight, linear_w_weight);
+      linear_spline_meta, global_fej_state_, use_fej,
+      weight, linear_w_weight);
 
   std::vector<double*> vec;
   // AddControlPoints(spline_meta, vec);
@@ -1905,8 +1908,11 @@ void TrajectoryEstimator2::AddDopplerMeasurementAnalytic2(
 // 只要后一项的误差
 void TrajectoryEstimator2::AddEventFlowMeasurementAnalytic3(
     double timestamp,
-    Eigen::Vector3d pixel_p, event_flow_velocity flow, 
-    const Eigen::Vector3d doppler_velocity,
+    Eigen::Vector3d pixel_p, 
+    // event_flow_velocity flow, 
+    Eigen::Vector3d normal_flow,
+    double normal_norm,
+    const Eigen::Vector3d doppler_velocity, 
     Eigen::Quaterniond & q_e_r, Eigen::Vector3d& t_e_r, double* linear_bias,
     double* angular_bias, double* time_offset,
     std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, bool use_order_opti, 
@@ -1939,12 +1945,10 @@ void TrajectoryEstimator2::AddEventFlowMeasurementAnalytic3(
 
     using Functor = EventAgularFactor4;
     ceres::CostFunction* cost_function =
-    new Functor(time_ns, pixel_p, flow, doppler_velocity, q_e_r, t_e_r,
+    new Functor(time_ns, pixel_p, normal_flow, normal_norm, doppler_velocity, q_e_r, t_e_r,
        linear_spline_meta, angular_spline_meta, 
        global_fej_state_, use_fej,
        weight, w_weight);
-
-
 
     // LOG(WARNING) << "after contrust EventAgularFactor" << std::endl;
 
@@ -2266,3 +2270,170 @@ void TrajectoryEstimator2::AddTwistBiasAnalytic(
     residual_summary_.AddResidualInfo(RType_Bias, cost_function, vec);
   }
 }
+
+
+void TrajectoryEstimator2::AddImuMeasurementAnalytic(
+    double timestamp, Eigen::Matrix3d Ri_in_world,
+    const Eigen::Vector3d& imu_acc, const Eigen::Vector3d& imu_gyr,
+    double* acc_bias, double* gyro_bias, double* gravity,
+    double* time_offset,
+    std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, bool use_order_opti, 
+    double weight, double w_weight, bool marg_this_factor)
+  {
+    int64_t time_ns;
+    if (!MeasuredTimeToNs(EventSensor, timestamp, time_ns)) return;
+    SplineMeta<SplineOrder> linear_spline_meta;
+    SplineMeta<SplineOrder> angular_spline_meta;
+    trajectory_->CaculateSplineMeta({{time_ns, time_ns}}, linear_spline_meta, angular_spline_meta);
+
+    LOG(ERROR) << "AddEventFlowMeasurementAnalytic2" << std::endl;
+
+    using Functor = ImuFactor;
+    ceres::CostFunction* cost_function =
+    new Functor(time_ns, Ri_in_world, imu_acc, imu_gyr, // acc_bias, gyro_bias,
+                // gravity, 
+                time_offset, linear_spline_meta, angular_spline_meta, 
+                global_fej_state_, use_fej,
+                weight, w_weight);
+
+    std::vector<double*> vec;
+    // AddControlPoints(spline_meta, vec);
+    AddControlPoints(linear_spline_meta, vec, true, use_order_opti); 
+    AddControlPoints(angular_spline_meta, vec, false, use_order_opti); 
+
+    vec.push_back(acc_bias);  
+    vec.push_back(gyro_bias); 
+    vec.push_back(gravity); 
+    // vec.push_back(t_offset_ns);  // time_offset
+
+    problem_->AddParameterBlock(gravity, 3, homo_vec_local_parameterization_);
+    problem_->AddParameterBlock(acc_bias, 3);
+    problem_->AddParameterBlock(gyro_bias, 3);
+    // problem_->AddParameterBlock(t_offset_ns, 3);
+
+    LOG(ERROR) << "imu factor size = " << vec.size() << std::endl;
+
+    // 1-11 添加
+    // 设置参数的下界
+    problem_->SetParameterLowerBound(acc_bias, 0, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(acc_bias, 0, 1.2);
+    // 设置参数的下界
+    problem_->SetParameterLowerBound(acc_bias, 1, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(acc_bias, 1, 1.2);
+        // 设置参数的下界
+    problem_->SetParameterLowerBound(acc_bias, 2, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(acc_bias, 2, 1.2);
+
+    // 设置参数的下界
+    problem_->SetParameterLowerBound(gyro_bias, 0, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(gyro_bias, 0, 1.2);
+    // 设置参数的下界
+    problem_->SetParameterLowerBound(gyro_bias, 1, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(gyro_bias, 1, 1.2);
+    // 设置参数的下界
+    problem_->SetParameterLowerBound(gyro_bias, 2, -1.2);
+    // 设置参数的上界
+    problem_->SetParameterUpperBound(gyro_bias, 2, 1.2);
+    if(use_order_opti)
+    {
+      ordering->AddElementToGroup(acc_bias, 1);
+      ordering->AddElementToGroup(gyro_bias, 3);
+    }
+
+    // LOG(WARNING) << "after add residual" << std::endl;
+
+    // Evaluate this problem
+    {
+      Eigen::VectorXd residuals;
+      std::vector<Eigen::MatrixXd> jacobians;
+
+      EvaluateCostFunctionWithJacobians(cost_function, vec.data(), residuals, jacobians);
+
+      std::ofstream residual_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/res.txt", std::ios::out | std::ios::app);
+      residual_file << residuals << std::endl;
+      residual_file.close();
+
+      std::ofstream jac_knot_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/jac.txt", std::ios::out | std::ios::app);
+      for (const auto& jac : jacobians)
+      {
+          for (int i = 0; i < jac.rows(); ++i) {
+              for (int j = 0; j < jac.cols(); ++j) {
+                  jac_knot_file << jac(i, j) << " ";
+              }
+          // jac_knot_file << jac << " ";
+          }
+      }
+      // jac_knot_file << "\n";
+      // jac_knot_file << "done " << std::endl;
+      jac_knot_file << std::endl;
+      jac_knot_file.close();
+    }
+
+
+    ceres::LossFunction* loss_function = new ceres::CauchyLoss(65.0);
+    if (marg_this_factor) {
+      int num_residuals = cost_function->num_residuals();
+      Eigen::MatrixXd residuals;
+      residuals.setZero(num_residuals, 1);
+
+      LOG(ERROR) << "Marginize: Event options.is_marg_state = " 
+                << ((options.is_marg_state)? "True" : "False") << std::endl;
+
+      // LOG(ERROR) << "Event Flow magnize" << std::endl; 
+
+      // LOG(ERROR) << "Marginize: Event residuals evaluate before magnize" << std::endl; 
+      // cost_function->Evaluate(vec.data(), residuals.data(), nullptr);
+
+      LOG(ERROR) << "Marginize: Event residuals " << residuals << std::endl; 
+      
+      std::vector<int> drop_set_wo_ctrl_point;
+
+      int Knot_size = angular_spline_meta.NumParameters();
+      drop_set_wo_ctrl_point.emplace_back(2 * Knot_size);       // linear_bias 
+      drop_set_wo_ctrl_point.emplace_back(2 * Knot_size + 1);   // angular_bias     // 原来是 Knot_size
+      drop_set_wo_ctrl_point.emplace_back(2 * Knot_size + 2);   // gravity 
+      // drop_set_wo_ctrl_point.emplace_back(2 * Knot_size + 3);  // t_offset
+      // drop_set_wo_ctrl_point.emplace_back(Knot_size + 1);   // q_e_r
+      // drop_set_wo_ctrl_point.emplace_back(Knot_size + 2);   // t_e_r
+      // drop_set_wo_ctrl_point.emplace_back(Knot_size + 3);   // time_offset
+      // drop_set_wo_ctrl_point.emplace_back(Knot_size + 2);   // time_offset          // 原来是 Knot_size ++ 1
+      // PrepareMarginalizationInfo(RType_Event, linear_spline_meta, angular_spline_meta, cost_function, NULL,
+      //                           vec, drop_set_wo_ctrl_point);
+      PrepareMarginalizationInfo(RType_Event, linear_spline_meta, angular_spline_meta, cost_function, loss_function,
+                                vec, drop_set_wo_ctrl_point);
+      // PrepareMarginalizationInfo(RType_Event, linear_spline_meta, cost_function, NULL,
+      //                     vec, drop_set_wo_ctrl_point);
+      // PrepareMarginalizationInfo(RType_Event, angular_spline_meta, cost_function, NULL,
+      //                     vec, drop_set_wo_ctrl_point);
+
+                          
+    } else {
+      // 2025-4-9 加入鲁棒估计
+      // Tukey 核示例
+      // ceres::LossFunction* loss_function = new ceres::TukeyLoss(1.0);
+      // problem_->AddResidualBlock(cost_function, loss_function,s vec);
+
+      // ceres::LossFunction* loss = new ceres::SoftLOneLoss(1e-16);
+      // problem_->AddResidualBlock(cost_function, loss, vec);
+
+
+       // 25.0
+      // ceres::LossFunction* loss_function = new ceres::CauchyLoss(25.0); // 25.0
+      // ceres::LossFunction* loss_function = new ceres::HuberLoss(1.5);
+      problem_->AddResidualBlock(cost_function, loss_function, vec);
+
+      // LOG(ERROR) << "ADD" << std::endl;
+      // problem_->AddResidualBlock(cost_function, NULL, vec);
+      // LOG(ERROR) << "ADD Done" << std::endl;
+    }
+
+    if (options.show_residual_summary) {
+      residual_summary_.AddResidualTimestamp(RType_Event, time_ns);
+      residual_summary_.AddResidualInfo(RType_Event, cost_function, vec);
+    }
+  }

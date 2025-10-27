@@ -1,6 +1,6 @@
 ## radar ego velocity estimation
 # filtering
-min_dist: 50.0 #0.25                        # min distance of valid detection
+min_dist: 10.0 # 50.0 #0.25                        # min distance of valid detection
 max_dist: 100.0 #70.0 #10.0 #100                         # Max distance of valid detection
 min_db: 5                             # min SNR in [db]
 elevation_thresh_deg: 60              # threshold for elevation [deg]

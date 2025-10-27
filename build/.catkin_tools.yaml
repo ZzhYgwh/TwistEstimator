@@ -1,6 +1,0 @@
-devel_space: /home/hao/Desktop/twist_ws/src/TwistEstimator/devel
-install: false
-install_space: /home/hao/Desktop/twist_ws/src/TwistEstimator/install
-profile: default
-source_space: /home/hao/Desktop/twist_ws/src/TwistEstimator/src
-workspace: /home/hao/Desktop/twist_ws/src/TwistEstimator

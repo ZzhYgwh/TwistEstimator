@@ -1,0 +1,41 @@
+
+<launch>
+  <!-- 启动 test_detector2.py -->
+  <!-- <node pkg="twist_estimator" type="test_estimator3" name="test_estimator3" output="screen"> -->
+    <!-- <param name="param_name" value="param_value" /> -->
+  <!-- </node> -->
+
+  <!-- 启动 combi_radar.py -->
+  <node pkg="twist_estimator" type="combi_radar_dji_17.py" name="combi_radar" output="screen">
+    <!-- <param name="param_name" value="param_value" /> -->
+  </node>
+
+  <!-- 启动 catch_radar_twist.py -->
+  <node pkg="twist_estimator" type="catch_radar_twist_dji_17.py" name="catch_radar_twist" output="screen">
+    <!-- <param name="param_name" value="param_value" /> -->
+  </node>
+
+  <!-- 启动 catch_radar_twist.py -->
+  <!-- node pkg="twist_estimator" type="catch_radar_estimator.py" name="catch_radar_estimator" output="screen" -->
+    <!-- <param name="param_name" value="param_value" /> -->
+  <!-- /node -->
+
+    <!-- 启动 catch_radar_twist.py -->
+  <node pkg="twist_estimator" type="catch_radar_estimator_dji_17.py" name="catch_radar_estimator_dji_10" output="screen">
+    <!-- <param name="param_name" value="param_value" /> -->
+  </node>
+
+  <!-- 启动 catch_gt_twist.py -->
+  <node pkg="twist_estimator" type="catch_gt_twist_dji_17.py" name="catch_gt_twist_dji" output="screen">
+    <!-- <param name="param_name" value="param_value" /> -->
+  </node>
+
+  <!-- 启动 visual_twist.py -->
+  <!-- <node pkg="twist_estimator" type="visual_twist.py" name="visual_twist" output="screen"> -->
+    <!-- <param name="param_name" value="param_value" /> -->
+  <!-- </node> -->
+
+  <!-- 启动 rviz 并加载指定的配置文件 -->
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find twist_estimator)/config/rviz_config.rviz" output="screen" />
+
+</launch>

@@ -111,7 +111,10 @@
         "r3_spline copy": "cpp",
         "rd6_spline copy": "cpp",
         "numbers": "cpp",
-        "radar_ego_velocity_estimator copy": "cpp"
+        "radar_ego_velocity_estimator copy": "cpp",
+        "event_ct_flow_sae 10-8": "cpp",
+        "event_ct_flow_sae 5-28": "cpp",
+        "*.icc": "cpp"
     },
     "python.autoComplete.extraPaths": [
         "/home/hao/Desktop/radar-event-new/devel/lib/python3/dist-packages",

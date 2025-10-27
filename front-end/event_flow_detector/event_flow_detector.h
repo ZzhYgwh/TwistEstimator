@@ -32,6 +32,7 @@
 
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
+#include <sensor_msgs/Imu.h>
 #include <cv_bridge/cv_bridge.h>
 
 #include <thread>
@@ -156,9 +157,13 @@ struct TwistData2
   };
 
   TwistData2(geometry_msgs::TwistWithCovarianceStamped twist, const sensor_msgs::PointCloud2& points,
-   std::vector<cv::Point2d> best_inliers, std::vector<event_flow_velocity> best_flow): 
-   best_inliers(best_inliers), best_flow(best_flow), point_cloud(points), is_relative_time(false)
-  {
+    std::vector<cv::Point2d> best_inliers, std::vector<event_flow_velocity> best_flow, 
+    std::vector<Eigen::Vector3d> normal_flows,
+    std::vector<double> normal_norms): 
+   best_inliers(best_inliers), best_flow(best_flow), point_cloud(points), 
+   normal_flows(normal_flows), normal_norms(normal_norms),
+   is_relative_time(false)
+   {
     timestamp = twist.header.stamp.toSec();
     angular_vel_vec_ << twist.twist.twist.angular.x, twist.twist.twist.angular.y, twist.twist.twist.angular.z;
     linear_vel_vec_ << twist.twist.twist.linear.x, twist.twist.twist.linear.y, twist.twist.twist.linear.z;
@@ -171,7 +176,28 @@ struct TwistData2
     angular_cov << twist.twist.covariance[21], twist.twist.covariance[22], twist.twist.covariance[23],
                   twist.twist.covariance[27], twist.twist.covariance[28], twist.twist.covariance[29],
                   twist.twist.covariance[33], twist.twist.covariance[34], twist.twist.covariance[35];
-  }
+   }
+
+//   TwistData2(geometry_msgs::TwistWithCovarianceStamped twist, const sensor_msgs::PointCloud2& points,
+//     std::vector<cv::Point2d> best_inliers, std::vector<event_flow_velocity> best_flow, 
+//     std::vector<sensor_msgs::Imu> imu_data): 
+//    best_inliers(best_inliers), best_flow(best_flow), point_cloud(points), 
+//    imu_data_vec(imu_data), is_relative_time(false)
+//   {
+//     timestamp = twist.header.stamp.toSec();
+//     angular_vel_vec_ << twist.twist.twist.angular.x, twist.twist.twist.angular.y, twist.twist.twist.angular.z;
+//     linear_vel_vec_ << twist.twist.twist.linear.x, twist.twist.twist.linear.y, twist.twist.twist.linear.z;
+//     twist_vec_ << angular_vel_vec_, linear_vel_vec_;
+
+//     linear_cov << twist.twist.covariance[0], twist.twist.covariance[1], twist.twist.covariance[2],
+//                   twist.twist.covariance[3], twist.twist.covariance[4], twist.twist.covariance[5],
+//                   twist.twist.covariance[6], twist.twist.covariance[7], twist.twist.covariance[8];
+
+//     angular_cov << twist.twist.covariance[21], twist.twist.covariance[22], twist.twist.covariance[23],
+//                   twist.twist.covariance[27], twist.twist.covariance[28], twist.twist.covariance[29],
+//                   twist.twist.covariance[33], twist.twist.covariance[34], twist.twist.covariance[35];
+//   }
+
   bool is_relative_time;
   double timestamp;
   Eigen::Vector3d angular_vel_vec_;
@@ -181,6 +207,11 @@ struct TwistData2
   std::vector<cv::Point2d> best_inliers;
   std::vector<event_flow_velocity> best_flow;
   std::vector<double> norm_pre_points;
+  std::vector<Eigen::Vector4d> planes;
+  std::vector<Eigen::Vector3d> normal_flows;
+  std::vector<double> normal_norms;
+
+//   std::vector<sensor_msgs::Imu> imu_data_vec;
 
   sensor_msgs::PointCloud2 point_cloud;
 
@@ -1745,7 +1776,7 @@ public:
                 }
 
                 // assert(Grad_x_vec.size() == Grad_y_vec.size() == Grad_i_vec.size() && "size is not same!"); 
-                // int grad_size = Grad_x_vec.size();
+                // int grid_size = Grad_x_vec.size();
                 Grad_t /= event_t1;
                 Grad_xx += Grad_x * Grad_x;
                 Grad_xy += Grad_x * Grad_y;
@@ -4027,7 +4058,9 @@ public:
 
 
             LOG(ERROR) << "Final Debug for flow: " << best_inliers.size() << std::endl;
-            twist_result2_.push_back(TwistData2(twist_, cur_inliers, best_inliers, flow_pre_points));
+            std::vector<Eigen::Vector3d> normal_flows;
+            std::vector<double> normal_norms;
+            twist_result2_.push_back(TwistData2(twist_, cur_inliers, best_inliers, flow_pre_points, normal_flows, normal_norms));
 
             // 清空本次数据
             best_inliers.clear();

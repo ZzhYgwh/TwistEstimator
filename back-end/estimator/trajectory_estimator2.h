@@ -302,9 +302,12 @@ void AddEventFlowMeasurementAnalytic2(
 //     double* angular_bias, double* time_offset,
 //     double weight, double w_weight, bool marg_this_factor);
 
+
 void AddDopplerMeasurementAnalytic2(
   double timestamp, const Eigen::Vector3d& point, double* linear_bias,
-  const double& doppler, const Eigen::Matrix3d R_e_r, bool use_order_opti,
+  const double& doppler, const Eigen::Matrix3d R_e_r, 
+  std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, 
+  bool use_order_opti,
   double weight, double linear_w_weight, bool marg_this_factor);
 
 // void AddEventFlowMeasurementAnalytic3(
@@ -317,11 +320,22 @@ void AddDopplerMeasurementAnalytic2(
 
 void AddEventFlowMeasurementAnalytic3(
     double timestamp,
-    Eigen::Vector3d pixel_p, event_flow_velocity flow, 
-    const Eigen::Vector3d doppler_velocity,
+    Eigen::Vector3d pixel_p, 
+    // event_flow_velocity flow, 
+    Eigen::Vector3d normal_flow,
+    double normal_norm,
+    const Eigen::Vector3d doppler_velocity, 
     Eigen::Quaterniond & q_e_r, Eigen::Vector3d& t_e_r, double* linear_bias,
     double* angular_bias, double* time_offset,
-    std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, bool use_order_opti,
+    std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, bool use_order_opti, 
+    double weight, double w_weight, bool marg_this_factor);
+
+void AddImuMeasurementAnalytic(
+    double timestamp, Eigen::Matrix3d Ri_in_world,
+    const Eigen::Vector3d& imu_acc, const Eigen::Vector3d& imu_gyr,
+    double* acc_bias, double* gyro_bias, double* gravity,
+    double* time_offset,
+    std::shared_ptr<FEJ_STATE> global_fej_state_, bool use_fej, bool use_order_opti, 
     double weight, double w_weight, bool marg_this_factor);
 
   void AddCallback2(

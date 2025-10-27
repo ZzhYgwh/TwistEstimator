@@ -41,6 +41,7 @@
 #include <nav_msgs/Path.h>
 #include <geometry_msgs/TwistWithCovarianceStamped.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Imu.h>
 
 #include <pcl/common/transforms.h>            //pcl::transformPointCloud
 #include <pcl_conversions/pcl_conversions.h>  //pcl::fromROSMsg
@@ -62,9 +63,15 @@ using SE3d = Sophus::SE3<double>;
 struct TwistBias {
   TwistBias()
       : omega_bias(Eigen::Vector3d::Zero()),
-        vel_bias(Eigen::Vector3d::Zero()) {}
+        vel_bias(Eigen::Vector3d::Zero()),
+        acc_bias(Eigen::Vector3d::Zero()),
+        gyr_bias(Eigen::Vector3d::Zero()),
+        gravity(Eigen::Vector3d(0, 0, -9.8)) {}
   Eigen::Vector3d omega_bias;
   Eigen::Vector3d vel_bias;
+  Eigen::Vector3d acc_bias;
+  Eigen::Vector3d gyr_bias;
+  Eigen::Vector3d gravity;
 };
 
 class TwistEstimator
@@ -127,6 +134,9 @@ VPointCloud init_ctrl_point_;
 
 std::vector<TwistData> twist_vec_;
 std::vector<TwistData2> twist2_vec_;
+std::deque<sensor_msgs::Imu::Ptr> imu_buffer;
+std::deque<sensor_msgs::Imu::Ptr>::iterator imu_start;
+std::deque<sensor_msgs::Imu::Ptr>::iterator imu_end;
 
 std::vector<TwistData2> twist2_margin_vec_;
 bool initial_done;
@@ -142,6 +152,12 @@ std::vector<TwistVelocity>::iterator it_base_vel;
 std::vector<TwistData2>::iterator it_base2;
 
 int before_index = -1;
+
+Eigen::Matrix3d Ri_in_world;
+
+double last_max_time;    
+double traj_max_time; 
+Twist_Trajectory::Ptr twist_trajctory;
 
 // 2025-1-1
 // 加入
@@ -207,7 +223,7 @@ void Init()
   // std::string file = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/params.yaml";
   // std::string file = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/demo.yaml";
   // std::string file = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/demo_228.yaml";
-  std::string file = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/dji2.yaml";
+  std::string file = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/dji2.yaml";
   ParseYamlFile(file);
 
   CreateEstimator();
@@ -261,6 +277,8 @@ void Init()
 
   q0.setIdentity();
   t0.setZero();
+
+  Ri_in_world.setIdentity();
 
   LOG(INFO) << "Initialized Successfully" << std::endl;
 
@@ -897,9 +915,10 @@ void UpdatePrior3()
           // estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
           //     q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, global_fej_state_, use_fej, 
           //     omega_weight, omega_w_weight, marg_this_factor);
-          estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
-              q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, global_fej_state_, use_fej, 
-              use_order_opti, omega_weight, omega_w_weight, marg_this_factor);
+          // 此函数已经废弃
+          // estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
+          //     q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, global_fej_state_, use_fej, 
+          //     use_order_opti, omega_weight, omega_w_weight, marg_this_factor);
 
         }
         LOG(ERROR) << "Marginasize: Add Event Flow " << std::endl;
@@ -1976,8 +1995,10 @@ void Estimate2()
   // LOG(ERROR) << "twist2_vec_.size = " << twist2_vec_.size() << std::endl;
 
   // [step4] 根据样条段，分割当前区间
-  double last_max_time = trajectory_->maxTime(RadarSensor);
-  double traj_max_time = last_max_time + t_add; // 单位: 秒
+  // double 
+  last_max_time = trajectory_->maxTime(RadarSensor);
+  // double 
+  traj_max_time = last_max_time + t_add; // 单位: 秒
   // LOG(ERROR) << "last traj_max_time = " << last_max_time << std::endl;
   // LOG(ERROR) << "traj_max_time = " << traj_max_time << std::endl;
   // LOG(ERROR) << "twist2_vec_.back().timestamp = " << twist2_vec_.back().timestamp << std::endl;
@@ -1993,7 +2014,7 @@ void Estimate2()
   // }
 
   auto it = std::find_if(twist2_vec_.rbegin(), twist2_vec_.rend(), 
-                      [traj_max_time](const TwistData2& data) {
+                      [this](const TwistData2& data) {
                           return data.timestamp < traj_max_time;
                       });
   it_base2 = ((it == twist2_vec_.rend())? twist2_vec_.begin() : it.base() - 1); // it 的正向跌代器
@@ -2992,7 +3013,8 @@ void Local_Estimate2()
 
   
   double last_min_time = local_trajectory_->minTime(RadarSensor);  
-  double last_max_time = local_trajectory_->maxTime(RadarSensor);
+  // double 
+  last_max_time = local_trajectory_->maxTime(RadarSensor);
   static long int spline_counts = 0;
   LOG(ERROR) << "local_trajectory_ time in [" << last_min_time << ", " << last_max_time << "] " << std::endl;
 
@@ -3839,8 +3861,12 @@ void UpdatePrior4()
   }
 
 
+
   std::map<int, double*> para_bw_vec;
   std::map<int, double*> para_bv_vec;
+  std::map<int, double*> imu_ba_vec;
+  std::map<int, double*> imu_bg_vec;
+  std::map<int, double*> imu_g_vec;
   {
     // 分配内存并深拷贝 omega_bias 数据
     para_bw_vec[0] = new double[3];
@@ -3855,6 +3881,26 @@ void UpdatePrior4()
 
     para_bv_vec[1] = new double[3];
     std::memcpy(para_bv_vec[1], all_twist_bias_.at(cur_time).vel_bias.data(), 3 * sizeof(double));
+
+    // 分配内存并深拷贝 vel_bias 数据
+    imu_ba_vec[0] = new double[3];
+    std::memcpy(imu_ba_vec[0], all_twist_bias_.at(last_time).acc_bias.data(), 3 * sizeof(double));
+
+    imu_ba_vec[1] = new double[3];
+    std::memcpy(imu_ba_vec[1], all_twist_bias_.at(cur_time).acc_bias.data(), 3 * sizeof(double));
+
+    imu_bg_vec[0] = new double[3];
+    std::memcpy(imu_bg_vec[0], all_twist_bias_.at(last_time).gyr_bias.data(), 3 * sizeof(double));
+
+    imu_bg_vec[1] = new double[3];
+    std::memcpy(imu_bg_vec[1], all_twist_bias_.at(cur_time).gyr_bias.data(), 3 * sizeof(double));
+
+    imu_g_vec[0] = new double[3];
+    std::memcpy(imu_bg_vec[0], all_twist_bias_.at(last_time).gravity.data(), 3 * sizeof(double));
+
+    imu_g_vec[1] = new double[3];
+    std::memcpy(imu_bg_vec[1], all_twist_bias_.at(cur_time).gravity.data(), 3 * sizeof(double));   
+
   }
 
   // 构建问题
@@ -3966,7 +4012,7 @@ void UpdatePrior4()
       for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++iter_doppler, ++idx) {
           pts[idx] << *iter_x, *iter_y, *iter_z;
           dopplers[idx] = *iter_doppler;
-          LOG(ERROR) << "idx = " << idx << ", total_points = " << total_points << std::endl;
+          // LOG(ERROR) << "idx = " << idx << ", total_points = " << total_points << std::endl;
       }
       LOG(ERROR) << "Get enough points" << std::endl;
 
@@ -3975,10 +4021,13 @@ void UpdatePrior4()
           Eigen::Vector3d pt = pts[i];
           float pt_doppler = dopplers[i];
           estimator->AddDopplerMeasurementAnalytic2(twist_timestamp, pt, para_bv_vec[1],
-              pt_doppler, R_r_e, use_order_opti, linear_weight, linear_w_weight, true);
+              pt_doppler, R_r_e, global_fej_state_, use_fej, 
+              use_order_opti, linear_weight, linear_w_weight, true);
       }
     }
     LOG(ERROR) << "Marginasize: Add Doppler Markers " << std::endl;
+
+    // break;
 
     // double* angular_bias_ = para_bw_vec[1];
     // event_flow_factors_num += it_temp_->best_inliers.size();
@@ -3989,10 +4038,35 @@ void UpdatePrior4()
       Eigen::Vector3d pixel_cord = K.inverse() * pixel;         
       // estimator->AddEventFlowMeasurementAnalytic2(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
       //     q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, omega_weight, omega_w_weight, false);
-      estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
+      estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, 
+      // it_temp_->best_flow[i], 
+      it_temp_->normal_flows[i], it_temp_->normal_norms[i], it_temp_->linear_vel_vec_,
           q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, global_fej_state_, use_fej, 
           use_order_opti, omega_weight, omega_w_weight, true);
     }
+
+    // 加入IMU量测
+    /*Eigen::Vector3d imu_acc, imu_gyr;
+    // 使用迭代器 查找适合时间范围 [last_max_time traj_max_time) 的 IMU数据  
+
+    // for(int i = 0; i < imu_buffer.size(); i++)
+    for (auto it = imu_start; it != imu_end; ++it) 
+    { 
+      // 从sensor_msgs/Imu 中提取信息 it_temp_->imu_data_vec[i]
+      const sensor_msgs::Imu imu_msg = **it;
+      imu_acc << imu_msg.linear_acceleration.x,
+                  imu_msg.linear_acceleration.y,
+                  imu_msg.linear_acceleration.z;
+
+      imu_gyr << imu_msg.angular_velocity.x,
+                  imu_msg.angular_velocity.y,
+                  imu_msg.angular_velocity.z;
+
+      estimator->AddImuMeasurementAnalytic(twist_timestamp, Ri_in_world, imu_acc, imu_gyr,
+          imu_ba_vec[1], imu_bg_vec[1], imu_g_vec[1], time_offset, global_fej_state_, use_fej, 
+          use_order_opti, omega_weight, omega_w_weight, true);
+    }*/
+
     LOG(ERROR) << "Marginasize: Add Event Flow " << std::endl;
   }
 
@@ -4016,7 +4090,7 @@ void UpdatePrior4()
 // 使用速度空间进行优化， 状态为 v w, 其他参数 ba bg, T, t
 // void Estimate2(TwistData2& twist)
 // UpdatePrior4
-Twist_Trajectory::Ptr twist_trajctory;
+
 void Estimate3()
 {
   LOG(ERROR) << "  ----------------- Estimate3 -------------------- " << std::endl;
@@ -4032,8 +4106,9 @@ void Estimate3()
   // [step4] 根据样条段，分割当前区间
  
   // double last_max_time = (twist_spline.maxTimeNs() - EP_RtoI.t_offset_ns) * NS_TO_S;
-  double last_max_time = twist_trajctory->maxTime(RadarSensor);
-  double traj_max_time = last_max_time + t_add; // 单位: 秒
+
+  last_max_time = twist_trajctory->maxTime(RadarSensor);
+  traj_max_time = last_max_time + t_add; // 单位: 秒
   LOG(ERROR) << "last traj_max_time = " << last_max_time << std::endl;
   LOG(ERROR) << "traj_max_time = " << traj_max_time << std::endl;
   LOG(ERROR) << "twist2_vec_.back().timestamp = " << twist2_vec_.back().timestamp << std::endl;
@@ -4041,7 +4116,7 @@ void Estimate3()
     return;
 
   auto it = std::find_if(twist2_vec_.rbegin(), twist2_vec_.rend(), 
-                      [traj_max_time](const TwistData2& data) {
+                      [this](const TwistData2& data) {
                           return data.timestamp < traj_max_time;
                       });
 
@@ -4174,6 +4249,9 @@ void Estimate3()
 
   std::map<int, double*> para_bw_vec;
   std::map<int, double*> para_bv_vec;
+  std::map<int, double*> imu_ba_vec;
+  std::map<int, double*> imu_bg_vec;
+  std::map<int, double*> imu_g_vec;
   {
     // 分配内存并深拷贝 omega_bias 数据
     para_bw_vec[0] = new double[3];
@@ -4188,9 +4266,28 @@ void Estimate3()
 
     para_bv_vec[1] = new double[3];
     std::memcpy(para_bv_vec[1], all_twist_bias_.at(cur_time).vel_bias.data(), 3 * sizeof(double));
+
+    // 分配内存并深拷贝 vel_bias 数据
+    imu_ba_vec[0] = new double[3];
+    std::memcpy(imu_ba_vec[0], all_twist_bias_.at(last_time).acc_bias.data(), 3 * sizeof(double));
+
+    imu_ba_vec[1] = new double[3];
+    std::memcpy(imu_ba_vec[1], all_twist_bias_.at(cur_time).acc_bias.data(), 3 * sizeof(double));
+
+    imu_bg_vec[0] = new double[3];
+    std::memcpy(imu_bg_vec[0], all_twist_bias_.at(last_time).gyr_bias.data(), 3 * sizeof(double));
+
+    imu_bg_vec[1] = new double[3];
+    std::memcpy(imu_bg_vec[1], all_twist_bias_.at(cur_time).gyr_bias.data(), 3 * sizeof(double));
+
+    imu_g_vec[0] = new double[3];
+    std::memcpy(imu_bg_vec[0], all_twist_bias_.at(last_time).gravity.data(), 3 * sizeof(double));
+
+    imu_g_vec[1] = new double[3];
+    std::memcpy(imu_bg_vec[1], all_twist_bias_.at(cur_time).gravity.data(), 3 * sizeof(double));   
+
   }
   std::chrono::time_point<std::chrono::high_resolution_clock> time1 = std::chrono::high_resolution_clock::now();
-
 
   // [step5] 创建优化器
   TrajectoryEstimatorOptions option;
@@ -4370,6 +4467,7 @@ void Estimate3()
         }*/
 
         // 降采样
+        // doppler 线速度估计
         {
           int total_points = it_temp_->point_cloud.width;
           int sample_size = 25;
@@ -4409,10 +4507,14 @@ void Estimate3()
               Eigen::Vector3d pt = pts[i];
               float pt_doppler = dopplers[i];
               estimator->AddDopplerMeasurementAnalytic2(twist_timestamp, pt, para_bv_vec[1],
-                  pt_doppler, R_r_e, use_order_opti, linear_weight, linear_w_weight, false);
+                  pt_doppler, R_r_e, global_fej_state_, use_fej, 
+                  use_order_opti, linear_weight, linear_w_weight, false);
           }
         }
 
+        // break;
+
+        // event 角速度估计
         // double* angular_bias_ = para_bw_vec[1];
         event_flow_factors_num += it_temp_->best_inliers.size();
         LOG(ERROR) << " Add Flow Points: " << it_temp_->best_inliers.size() << std::endl;
@@ -4422,10 +4524,47 @@ void Estimate3()
           Eigen::Vector3d pixel_cord = K.inverse() * pixel;         
           // estimator->AddEventFlowMeasurementAnalytic2(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
           //     q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, omega_weight, omega_w_weight, false);
-          estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, it_temp_->best_flow[i], it_temp_->linear_vel_vec_,
+          estimator->AddEventFlowMeasurementAnalytic3(twist_timestamp, pixel_cord, // it_temp_->best_flow[i], 
+              it_temp_->normal_flows[i], it_temp_->normal_norms[i], it_temp_->linear_vel_vec_,
               q_e_r, t_e_r, para_bv_vec[1], para_bw_vec[1], time_offset, global_fej_state_, use_fej, 
               use_order_opti, omega_weight, omega_w_weight, false);
         }
+
+        // 加入IMU量测
+        /*Eigen::Vector3d imu_acc, imu_gyr;
+        // 使用迭代器 查找适合时间范围 [last_max_time traj_max_time) 的 IMU数据  
+
+        // 找到第一个 >= last_max_time 的 IMU 数据
+        imu_start = std::find_if(imu_buffer.begin(), imu_buffer.end(),
+            [this](const sensor_msgs::Imu::Ptr& imu) {
+                return imu->header.stamp.toSec() >= last_max_time;
+            });
+
+        // 找到第一个 >= traj_max_time 的 IMU 数据
+        imu_end = std::find_if(imu_start, imu_buffer.end(),
+            [this](const sensor_msgs::Imu::Ptr& imu) {
+                return imu->header.stamp.toSec() >= traj_max_time;
+            });
+        LOG(ERROR) << "Add IMU data: " << imu_end - imu_start << std::endl;
+        
+        // for(int i = 0; i < imu_buffer.size(); i++)
+        for (auto it = imu_start; it != imu_end; ++it)
+        { 
+          // 从sensor_msgs/Imu 中提取信息 it_temp_->imu_data_vec[i]
+          const sensor_msgs::Imu imu_msg = **it;
+          imu_acc << imu_msg.linear_acceleration.x,
+                      imu_msg.linear_acceleration.y,
+                      imu_msg.linear_acceleration.z;
+
+          imu_gyr << imu_msg.angular_velocity.x,
+                      imu_msg.angular_velocity.y,
+                      imu_msg.angular_velocity.z;
+
+          estimator->AddImuMeasurementAnalytic(twist_timestamp, Ri_in_world, imu_acc, imu_gyr,
+              imu_ba_vec[1], imu_bg_vec[1], imu_g_vec[1], time_offset, global_fej_state_, use_fej, 
+              use_order_opti, omega_weight, omega_w_weight, false);
+        }*/
+    
         LOG(ERROR) << "Marginasize: Add Event Flow " << std::endl;
 
         // TODO: twist.best_flow 是统一的光流,可以修改为每个事件的光流
@@ -4464,6 +4603,10 @@ void Estimate3()
 
         estimator->AddBiasFactor(para_bw_vec[0], para_bw_vec[1], 
                                   para_bv_vec[0], para_bv_vec[1], 
+                                  1, 100 * sqrt_info); // 100 * sqrt_info);
+        // add imu bias
+        estimator->AddBiasFactor(imu_ba_vec[0], imu_ba_vec[1], 
+                                  imu_bg_vec[0], imu_bg_vec[1], 
                                   1, 100 * sqrt_info); // 100 * sqrt_info);
 
         LOG(ERROR) << " Add Bias: " << std::endl;
@@ -4551,61 +4694,7 @@ void Estimate3()
                << "origin angular velocity = \t" << it->angular_vel_vec_(0) << ", " << it->angular_vel_vec_(1) << ", " << it->angular_vel_vec_(2) << "\n"
                << "estimate angular velocity = \t" << angular_velocity(0) << ", " << angular_velocity(1) << ", " << angular_velocity(2) << "\n";        
   
-
-    // Eigen::Quaterniond q_extract = pose.rotationQuaternion();
-    /*Eigen::Quaterniond q_extract(pose.rotationMatrix());
-    Eigen::Vector3d t_extract = pose.rotationMatrix() * pose.translation();
-    
-
-    // extrincs parameter event w.r.t to radar
-    ExtrinsicParam Extrin_e_r = twist_trajctory->GetSensorEP(EventSensor);
-    Eigen::Matrix4d T_e_r = Extrin_e_r.Get_T();
-    double timeoffset_e_r = Extrin_e_r.Get_Timeoffset();
-
-    LOG(ERROR) << "Estimate Result:\n" 
-              << "timestamp = \t" << std::setprecision(18) << it->timestamp + trajectory_->GetDataStartTime() << "\n"
-              << "position = \t" << t_extract.transpose() << "\n"
-              << "quaternion = \t" << q_extract.coeffs().transpose() << "\n"
-              << "linear velocity = \t" << linear_velocity(0) << ", " << linear_velocity(1) << ", " << linear_velocity(2) << "\n"
-              << "angular velocity = \t" << angular_velocity(0) << ", " << angular_velocity(1) << ", " << angular_velocity(2) << "\n"
-              << "omega_bias = \t" << Eigen::Vector3d(para_bw_vec[1]).transpose() << "\n"
-              << "linear_bias = \t" << Eigen::Vector3d(para_bv_vec[1]).transpose() << "\n"
-              << "T_e_r = \t" << T_e_r << "\n"
-              << "time_offset = \t" << timeoffset_e_r << std::endl;
-  
-    // ceres_debug_path
-    // for estimation residual
-    estimator->GetResidualSummary().PrintSummary(twist_trajctory->minTimeNs(),
-                                                 twist_trajctory->getDtNs());          
-  */
-    // double pose_time = it->timestamp + relative_start_time;
-    // Save_Result(pose_time, pose, bias);0
-    // Save_Result(pose_time, pose, bias, linear_velocity, angular_velocity);
-
-    // Save_Result(pose_time, pose, bias, linear_velocity, angular_velocity);
-  
   }  /// 发布结果
-
-  // check velocity estimation
-  /* std::fstream vel_output_file;
-  vel_output_file.open("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/estimate.tum", std::ios::out | std::ios::app);
-  for(auto it_temp_ = twist2_vec_.begin(); it_temp_ <= it_base2; it_temp_++)
-  {
-    auto pose = trajectory_->GetRadarPose(it_temp_->timestamp);
-    Eigen::Vector3d linear_velocity = pose.rotationMatrix().transpose() * trajectory_->GetTransVelWorld(it_temp_->timestamp);    // radar velocity
-    Eigen::Vector3d angular_velocity = trajectory_->GetRotVelBody(it_temp_->timestamp);  
-    LOG(ERROR) << "Estimate Velocity:\n"
-               << "origin linear velocity = \t" << it_temp_->linear_vel_vec_(0) << ", " << it_temp_->linear_vel_vec_(1) << ", " << it_temp_->linear_vel_vec_(2) << "\n"
-               << "estimate linear velocity = \t" << linear_velocity(0) << ", " << linear_velocity(1) << ", " << linear_velocity(2) << "\n"
-               << "origin angular velocity = \t" << it_temp_->angular_vel_vec_(0) << ", " << it_temp_->angular_vel_vec_(1) << ", " << it_temp_->angular_vel_vec_(2) << "\n"
-               << "estimate angular velocity = \t" << angular_velocity(0) << ", " << angular_velocity(1) << ", " << angular_velocity(2) << "\n";        
-  
-    vel_output_file << std::setprecision(20) << it_temp_->timestamp + data_start_time << " ";
-    vel_output_file << linear_velocity(0) << " " << linear_velocity(1) << " " << linear_velocity(2) << " ";
-    vel_output_file << angular_velocity(0) << " " << angular_velocity(1) << " " << angular_velocity(2) << " ";
-    vel_output_file << std::endl;
-  } 
-  vel_output_file.close();*/
 
   for(auto it_temp_ = twist2_vec_.begin() + 1; it_temp_ <= it_base2; it_temp_++)
   {
@@ -4829,6 +4918,11 @@ void Estimate3()
     //     parameter_blocks_mutable.push_back(const_cast<double*>(ptr));
     // }
   }
+
+  // 后置IMU数据更新
+  /*{
+    imu_buffer.erase(imu_start, imu_end);
+  }*/
   
   std::chrono::time_point<std::chrono::high_resolution_clock> time8 = std::chrono::high_resolution_clock::now();
   /// 更新下一个窗口
@@ -4863,6 +4957,13 @@ void Estimate3()
     all_twist_bias_[last_time].vel_bias = Eigen::Vector3d(para_bv_vec[0]);
     all_twist_bias_[cur_time].omega_bias = Eigen::Vector3d(para_bw_vec[1]);
     all_twist_bias_[cur_time].vel_bias = Eigen::Vector3d(para_bv_vec[1]);
+    all_twist_bias_[last_time].acc_bias = Eigen::Vector3d(imu_ba_vec[0]);
+    all_twist_bias_[last_time].gyr_bias = Eigen::Vector3d(imu_bg_vec[0]);
+    all_twist_bias_[cur_time].acc_bias = Eigen::Vector3d(imu_ba_vec[1]);
+    all_twist_bias_[cur_time].gyr_bias = Eigen::Vector3d(imu_bg_vec[1]);
+    all_twist_bias_[last_time].gravity = Eigen::Vector3d(imu_g_vec[0]);
+    all_twist_bias_[cur_time].gravity = Eigen::Vector3d(imu_g_vec[1]);
+
     last_time = cur_time;
 
     /*PublishTrajectoryAndMap(twist_trajctory, twist_trajctory->minTime(RadarSensor), 
@@ -5083,7 +5184,7 @@ void UpdatePrior5()
             it_temp_->linear_vel_vec_, linear_weight, linear_w_weight, R_weight, true);
     estimator->AddBodyLocalAngularVelocityMeasurementAnalytic(twist_timestamp, para_bw_vec[1], 
                 it_temp_->angular_vel_vec_, omega_weight, omega_w_weight, true);
-    }
+  }
 
   // LOG(ERROR) << "Marginasize: Add Event Flow Measurement" << std::endl;
 
@@ -5114,8 +5215,10 @@ void LooseEstimate()
   // [step4] 根据样条段，分割当前区间
  
   // double last_max_time = (twist_spline.maxTimeNs() - EP_RtoI.t_offset_ns) * NS_TO_S;
-  double last_max_time = twist_trajctory->maxTime(RadarSensor);
-  double traj_max_time = last_max_time + t_add; // 单位: 秒
+  // double 
+  last_max_time = twist_trajctory->maxTime(RadarSensor);
+  // double 
+  traj_max_time = last_max_time + t_add; // 单位: 秒
   LOG(ERROR) << "last traj_max_time = " << last_max_time << std::endl;
   LOG(ERROR) << "traj_max_time = " << traj_max_time << std::endl;
   LOG(ERROR) << "twist2_vec_.back().timestamp = " << twist2_vec_.back().timestamp << std::endl;
@@ -5123,7 +5226,7 @@ void LooseEstimate()
     return;
 
   auto it = std::find_if(twist2_vec_.rbegin(), twist2_vec_.rend(), 
-                      [traj_max_time](const TwistData2& data) {
+                      [this](const TwistData2& data) {
                           return data.timestamp < traj_max_time;
                       });
 
@@ -5340,13 +5443,13 @@ void LooseEstimate()
   long int doppler_factors_num = 0;
   long int event_flow_factors_num = 0;
 
-    // 雷达线速度必须存在
-    time5 = std::chrono::high_resolution_clock::now();
+  // 雷达线速度必须存在
+  time5 = std::chrono::high_resolution_clock::now();
 
-    // LOG(ERROR) << " Add all factor into the solver " << std::endl;
-    // LOG(ERROR) << "Estimator: Add Doppler Factors for " << doppler_factors_num << std::endl;
-    // LOG(ERROR) << "Estimator: Add EventFlow Factors for " << event_flow_factors_num << std::endl;
-    // LOG(ERROR) << "Estimator: Add Bias Factors for " << 1 << std::endl;
+  // LOG(ERROR) << " Add all factor into the solver " << std::endl;
+  // LOG(ERROR) << "Estimator: Add Doppler Factors for " << doppler_factors_num << std::endl;
+  // LOG(ERROR) << "Estimator: Add EventFlow Factors for " << event_flow_factors_num << std::endl;
+  // LOG(ERROR) << "Estimator: Add Bias Factors for " << 1 << std::endl;
   //}/// 因子图优化
 
   LOG(ERROR) << "First [Prior Ctrl ID] = [" << prior_ctrl_id.first << ","
@@ -5540,6 +5643,7 @@ void LooseEstimate()
 
         LOG(ERROR) << " Add Bias Factor " << std::endl;
 
+        // add radar & event bias
         estimator->AddBiasFactor(para_bw_vec[0], para_bw_vec[1], 
                                   para_bv_vec[0], para_bv_vec[1], 
                                   1, 100 * sqrt_info); // 100 * sqrt_info);
@@ -5887,6 +5991,12 @@ void LooseEstimate()
     all_twist_bias_[last_time].vel_bias = Eigen::Vector3d(para_bv_vec[0]);
     all_twist_bias_[cur_time].omega_bias = Eigen::Vector3d(para_bw_vec[1]);
     all_twist_bias_[cur_time].vel_bias = Eigen::Vector3d(para_bv_vec[1]);
+
+    all_twist_bias_[last_time].acc_bias = Eigen::Vector3d(para_bw_vec[0]);
+    all_twist_bias_[last_time].gyr_bias = Eigen::Vector3d(para_bv_vec[0]);
+    all_twist_bias_[cur_time].acc_bias = Eigen::Vector3d(para_bw_vec[1]);
+    all_twist_bias_[cur_time].gyr_bias = Eigen::Vector3d(para_bv_vec[1]);
+
     last_time = cur_time;
 
     /*PublishTrajectoryAndMap(twist_trajctory, twist_trajctory->minTime(RadarSensor), 
@@ -6125,7 +6235,7 @@ void ParseYamlFile(std::string& config_path)
   local_trajectory_->SetSensorExtrinsics(SensorType::EventSensor, trajectory_->GetSensorEP(EventSensor));
 
 
-
+  LOG(ERROR) << "get bias" << std::endl;
   if (node["bias"]) {
 
     // Load parameters from YAML into para_bw_vec and para_bv_vec
@@ -6134,14 +6244,23 @@ void ParseYamlFile(std::string& config_path)
 
     all_twist_bias_[0].omega_bias = Eigen::Map<Eigen::Vector3d>(omega_bias_vec.data());
     all_twist_bias_[0].vel_bias = Eigen::Map<Eigen::Vector3d>(vel_bias_vec.data());
-
+    LOG(ERROR) << "get sensor bias" << std::endl;
     // all_twist_bias_[0].omega_bias = node["bias"]["omega"].as<std::vector<double>>();
     // all_twist_bias_[0].vel_bias = node["bias"]["vel"].as<std::vector<double>>();
+    std::vector<double> acc_bias_vec = node["bias"]["acc"].as<std::vector<double>>();
+    std::vector<double> gyro_bias_vec = node["bias"]["gyr"].as<std::vector<double>>();
+    all_twist_bias_[0].acc_bias = Eigen::Map<Eigen::Vector3d>(acc_bias_vec.data());
+    all_twist_bias_[0].gyr_bias = Eigen::Map<Eigen::Vector3d>(gyro_bias_vec.data());
+    LOG(ERROR) << "get imu bias" << std::endl;
     
   } else {
     // Assign {0,0,0} if no bias exists in the YAML
     all_twist_bias_[0].omega_bias << 0, 0, 0;
     all_twist_bias_[0].vel_bias << 0, 0, 0;
+
+    all_twist_bias_[0].acc_bias << 0, 0, 0;
+    all_twist_bias_[0].gyr_bias << 0, 0, 0;
+
     LOG(ERROR) << "Bias Parameters Not Exist!" << std::endl;
   }
 
@@ -6154,7 +6273,10 @@ void ParseYamlFile(std::string& config_path)
             << ", " << all_twist_bias_[0].omega_bias(1) << ", " << all_twist_bias_[0].omega_bias(2) << "]";  
   LOG(INFO) << "para_bv_vec = " << all_twist_bias_[0].vel_bias(0) 
             << ", " << all_twist_bias_[0].vel_bias(1) << ", " << all_twist_bias_[0].vel_bias(2) << "]"; 
-
+  LOG(INFO) << "para_bw_vec = " << all_twist_bias_[0].acc_bias(0) 
+            << ", " << all_twist_bias_[0].acc_bias(1) << ", " << all_twist_bias_[0].acc_bias(2) << "]";  
+  LOG(INFO) << "para_bv_vec = " << all_twist_bias_[0].gyr_bias(0) 
+            << ", " << all_twist_bias_[0].gyr_bias(1) << ", " << all_twist_bias_[0].gyr_bias(2) << "]"; 
   if(!CreateCacheFolder(config_path))
   {
     std::cout << "\t Create Cache Folder Failed!" << std::endl;
