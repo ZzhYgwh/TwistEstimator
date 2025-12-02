@@ -15,25 +15,11 @@
     <!-- <param name="param_name" value="param_value" /> -->
   </node>
 
-  <!-- 启动 catch_radar_twist.py -->
-  <!-- node pkg="twist_estimator" type="catch_radar_estimator.py" name="catch_radar_estimator" output="screen" -->
-    <!-- <param name="param_name" value="param_value" /> -->
-  <!-- /node -->
-
     <!-- 启动 catch_radar_twist.py -->
   <node pkg="twist_estimator" type="catch_radar_estimator.py" name="catch_radar_estimator" output="screen">
     <!-- <param name="param_name" value="param_value" /> -->
   </node>
 
-  <!-- 启动 catch_gt_twist.py -->
-  <node pkg="twist_estimator" type="catch_gt_twist_hand_mocap.py" name="catch_gt_twist_hand" output="screen">
-    <!-- <param name="param_name" value="param_value" /> -->
-  </node>
-
-  <!-- 启动 visual_twist.py -->
-  <!-- <node pkg="twist_estimator" type="visual_twist.py" name="visual_twist" output="screen"> -->
-    <!-- <param name="param_name" value="param_value" /> -->
-  <!-- </node> -->
 
   <!-- 启动 rviz 并加载指定的配置文件 -->
   <node pkg="rviz" type="rviz" name="rviz" args="-d $(find twist_estimator)/config/rviz_config.rviz" output="screen" />

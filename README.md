@@ -4,10 +4,9 @@
     <br>
     <br>
 <div>
-
 [🛠️ Installation](#how-to-use-traj-lo) |
-[🎥 Video]() |
-[📖 Paper](doc/Radar_and_Event_Camera_Fusion_for_Agile_Robot_Ego_Motion_Estimation.pdf)
+[🎥 Video](https://www.youtube.com/watch?v=l6CFHe1b_40&t=82s) |
+[📖 Paper](https://arxiv.org/pdf/2506.18443)
 
 </div>
     <br>
@@ -26,15 +25,17 @@ The TwistEstimator is designed to provide complementary 6-DoF velocity estimatio
 ## Supported Dataset
 Currently, the released code only supports one LiDAR configuration. We will update it as soon as possible to provide multi-LiDAR support. The provided ROSbag data loader supports different types of LiDAR, including Livox, Ouster, Hesai, Robosense, and Velodyne. We have tested Traj-LO with the following datasets.
 
-| Dataset                                                                                                                                                                                                                 | LiDAR                               | Message Type                                       | Configuration file                       |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------|----------------------------------------------------|------------------------------------------|
-| [NTU VIRAL](https://ntu-aris.github.io/ntu_viral_dataset/)                                                                                                                                                              | Two Ouster OS1-16                   | sensor_msgs/PointCloud2                            | config_ntu.yaml                          |
-| [Hilti 2021](https://www.hilti-challenge.com/dataset-2021.html)                                                                                                                                                         | Ouster OS0-64 <br/> Livox mid-70    | sensor_msgs/PointCloud2 <br/>livox_ros_driver/CustomMsg | config_ouster.yaml<br/>config_livox.yaml |
-| [R3LIVE](https://github.com/ziv-lin/r3live_dataset)                                                                                                                                                                     | Livox Avia                          | livox_ros_driver/CustomMsg                            | config_livox.yaml                        |
-| [Point-LIO](https://connecthkuhk-my.sharepoint.com/personal/hdj65822_connect_hku_hk/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fhdj65822%5Fconnect%5Fhku%5Fhk%2FDocuments%2FDataset%20for%20Point%2DLIO%20examples&ga=1) | Livox Avia                          | livox_ros_driver/CustomMsg                            | config_pointlio.yaml                     |
-| [New College](https://ori-drs.github.io/newer-college-dataset/)                                                                                                                                                         | Ouster OS-1 64 <br/>Ouster OS-0 128 | sensor_msgs/PointCloud2                            | config_ouster.yaml                       |
-| [Hilti 2022 &2023](https://www.hilti-challenge.com/dataset-2022.html)                                                                                                                                                    | Hesai PandarXT-32 | sensor_msgs/PointCloud2                            | config_hesai.yaml                        |
-| [SubT-MRS](https://superodometry.com/iccv23_challenge_LiI)                                                                                                                                                    | Velodyne VLP16 | sensor_msgs/PointCloud2                            | config_velodyne.yaml                     |
+| Sequence                                                                                                                                                                                                        |
+|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [dji1]()                                                                                                                                                  |
+| [dji2]()                                                                                                                                        |
+| [dji3]()                                                                                                                                                            |
+| [hand1]() |
+| [hand2]()                                                                                                                                           |
+| [hand3]()                                                                                                                                       |
+| [road1]()                                                                                                                                          |
+| [road2]() |
+| [road3]() |
 
 The corresponding configuration files are located in the "data" directory. For optimal performance, you will need to fine-tune the parameters.
 
@@ -72,17 +73,32 @@ cd ..
 catkin build 
 
 or 
-
 catkin_make
 ```
 
 ## Run
 After modifying the config file for your environment, you can run TwistEstimator.
+
+For  Seqence `dji`:
+
+```
+roslaunch twist_estimator test_estimator.launch			
 ```
 
+For  Seqence `hand`:
+
+```
+roslaunch twist_estimator test_estimator_hand.launch
+```
+
+For  Seqence `road`:
+
+```
+roslaunch twist_estimator test_estimator_road.launch
 ```
 
 ## Test
+
 ### Test Front-End
 ```
 cd <path_to_workspace>
@@ -119,10 +135,15 @@ python3 <path_to_workspace>/src/TwistEstimator/scripts/combi_radar.py
 
 ## Citation
 
-If you use this project for any academic work, please cite our RA-L [paper](???).
+If you use this project for any academic work, please cite our [paper](???).
 
 ```bibtex
-
+@article{lyu2025radar,
+  title={Radar and Event Camera Fusion for Agile Robot Ego-Motion Estimation},
+  author={Lyu, Yang and Zou, Zhenghao and Li, Yanfeng and Guo, Xiaohu and Zhao, Chunhui and Pan, Quan},
+  journal={arXiv preprint arXiv:2506.18443},
+  year={2025}
+}
 ```
 
 ## Contributing
