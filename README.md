@@ -10,12 +10,10 @@
 
 </div>
     <br>
-    <img src="doc/image/trajectory.png" width="50%" height="auto" alt="Trajectory Image">
-    <img src="doc/image/pipeline.png" width="40%" height="auto" alt="Pipeline Image">
+    <img src="doc/Platform_Dataset2.png" width="50%" height="auto" alt="Trajectory Image">
+    <img src="doc/Pipeline.jpg" width="100%" height="auto" alt="Pipeline Image">
 <br>
 </div>
-
-
 
 
 ## What is TwistEstimator
@@ -23,23 +21,25 @@ The TwistEstimator is designed to provide complementary 6-DoF velocity estimatio
 
 
 ## Supported Dataset
-Currently, the released code only supports one LiDAR configuration. We will update it as soon as possible to provide multi-LiDAR support. The provided ROSbag data loader supports different types of LiDAR, including Livox, Ouster, Hesai, Robosense, and Velodyne. We have tested Traj-LO with the following datasets.
+Currently, we are only releasing DJI airborne data. All details will be released after the paper is officially published.
 
-| Sequence                                                                                                                                                                                                        |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [dji1]()                                                                                                                                                  |
-| [dji2]()                                                                                                                                        |
-| [dji3]()                                                                                                                                                            |
-| [hand1]() |
-| [hand2]()                                                                                                                                           |
-| [hand3]()                                                                                                                                       |
-| [road1]()                                                                                                                                          |
-| [road2]() |
-| [road3]() |
+| Sequence | Lin.Max | Lin.Avg | Ang.Max | Ang.Avg | HDR  |
+|----------|---------|---------|---------|---------|------|
+| [dji1](https://drive.google.com/file/d/1t3aWiledN4z9AvQVwkIMkh-Bj-OLdh6s/view?usp=drive_link)     | 4.49    | 4.01    | 0.34    | 0.16    | 62   |
+| [dji2](https://drive.google.com/file/d/1ASDEsFF8jruKPVda0LUKFepQ7AQLgqK5/view?usp=drive_link)     | 4.51    | 3.47    | 0.54    | 0.16    | 63   |
+| [dji3](https://drive.google.com/file/d/1YfV7CcaLFXrTO7i7eUZA6ka3Gvqy8c0B/view?usp=drive_link)     | 6.30    | 3.74    | 0.56    | 0.18    | 62   |
+| hand1    | 4.20    | 0.92    | 0.42    | 0.16    | 89   |
+| hand2    | 2.32    | 0.87    | 0.45    | 0.17    | 92   |
+| hand3    | 4.39    | 1.17    | 0.41    | 0.16    | 97   |
+| road1    | 7.64    | **6.32** | _0.55_ | **0.28** | 96  |
+| road2    | **7.75** | _5.83_ | 0.54    | _0.27_  | _101_ |
+| road3    | _7.51_  | 5.40    | **0.65** | 0.17    | **109** |
 
-The corresponding configuration files are located in the "data" directory. For optimal performance, you will need to fine-tune the parameters.
 
-Since Traj-LO is a LiDAR-only method, it may fail in narrow spaces where there are few valid points for a long time.
+*Notation:* Linear velocity in m/s, angular velocity in rad/s, HDR in dB.  
+**Bold** indicates the best value.  
+*Underline* indicates the second-best value.
+
 
 ## Dependency
 TwistEstimator is developed based on ROS1 and may be extended to ROS2 in the future. In the author's pc environment, the third-party dependencies required by the code are as follows:
@@ -79,23 +79,23 @@ catkin_make
 ## Run
 After modifying the config file for your environment, you can run TwistEstimator.
 
-For  Seqence `dji`:
-
+For  Sequence **`dji`**:
 ```
 roslaunch twist_estimator test_estimator.launch			
 ```
 
-For  Seqence `hand`:
-
+For  Sequence **`hand`**:
 ```
 roslaunch twist_estimator test_estimator_hand.launch
 ```
 
-For  Seqence `road`:
-
+For  Sequence **`road`**:
 ```
 roslaunch twist_estimator test_estimator_road.launch
 ```
+
+## Evaluation
+由于速度估计的随机性，我们也开放论文实验的原始数据，为速度估计任务提供对比参考。
 
 ## Test
 
