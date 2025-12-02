@@ -4,9 +4,10 @@
     <br>
     <br>
 <div>
-[🛠️ Installation](#how-to-use-traj-lo) |
-[🎥 Video](https://www.youtube.com/watch?v=l6CFHe1b_40&t=82s) |
-[📖 Paper](https://arxiv.org/pdf/2506.18443)
+
+| [🛠️ Installation](#) | [🎥 Video](https://www.youtube.com/watch?v=l6CFHe1b_40&t=82s) | [📖 Paper](https://arxiv.org/pdf/2506.18443) |
+|----------------------|------------------------------------------------------------|---------------------------------------------|
+
 
 </div>
     <br>
@@ -95,7 +96,7 @@ roslaunch twist_estimator test_estimator_road.launch
 ```
 
 ## Evaluation
-由于速度估计的随机性，我们也开放论文实验的原始数据，为速度估计任务提供对比参考。
+Due to the randomness of velocity estimation, we have also made the original experimental data available in the paper available for comparison and reference in velocity estimation tasks.
 
 ## Test
 
