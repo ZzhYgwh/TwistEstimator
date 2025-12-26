@@ -37,7 +37,7 @@ use_gauss: false
 ratio_inliers: 0.15 #0.35 # for mesh size = 4
 grid_size: 10
 
-radar_config: "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_lab.yaml"
+radar_config: "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_hand.yaml"
 
 radar:
   topic: "/radar/data"
@@ -205,8 +205,10 @@ use_order_opti: false  # use under Ceres Version 2.x
 
 output_file: "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/twist_estimator.csv" 
 output_dt: 0.1
-visualize_marker_scale: 0.8
-visualize_doppler_scale: 1.5
+visualize_marker_scale: 3.0 #0.8
+visualize_doppler_scale: 5.0 #1.5
+visualize_traj_total_time: 5.0
+visualize_traj_line_width: 5
 cam_topic: "/dvs/image_raw"
 
 local_dt: 3.0

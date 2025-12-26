@@ -221,6 +221,8 @@ void customFromROSMsg(const sensor_msgs::PointCloud2& ros_msg, pcl::PointCloud<p
 
 double visualize_marker_scale;
 double visualize_doppler_scale;
+double visualize_traj_total_time;
+double visualize_traj_line_width;
 
 // 发布点云和矢量
 /**
@@ -244,6 +246,13 @@ void visualizePointCloudAndVectors(const sensor_msgs::PointCloud2& inlier_radar_
     customFromROSMsg(inlier_radar_msg, *cloud);
 
     visualization_msgs::MarkerArray marker_array;
+    // 1. 删除所有之前的 marker
+    {
+        visualization_msgs::Marker delete_marker;
+        delete_marker.header.stamp = ros::Time::now();
+        delete_marker.action = visualization_msgs::Marker::DELETEALL;
+        marker_array.markers.push_back(delete_marker);
+    }
     marker_array.markers.reserve(cloud->size() * 2);
 
     int id_counter = 0;  // 每个 Marker 需要唯一 ID
@@ -460,7 +469,7 @@ bool DopplerEstimation(const sensor_msgs::PointCloud2::Ptr radar_msgs_ptr_copy)
     return false;
 }
 
-std::fstream event_file;
+// std::fstream event_file;
 /**
  * @brief 处理来自事件传感器的事件数据。
  * 
@@ -501,9 +510,9 @@ void EventCallback(dvs_msgs::EventArray::Ptr event_msgs_ptr)
     // LOG(ERROR) << "event_msgs output = " << event_msgs_ptr->events.size() / 
     //                         (event_msgs_ptr->events.back().ts.toSec() - event_msgs_ptr->events.front().ts.toSec()) << " p/s" << std::endl;
 
-    event_file.open("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/events.csv", std::ios::out | std::ios::app);
-    event_file << event_msgs_ptr->events.size() / (event_msgs_ptr->events.back().ts.toSec() - event_msgs_ptr->events.front().ts.toSec()) << std::endl;
-    event_file.close();
+    // event_file.open("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/events.csv", std::ios::out | std::ios::app);
+    // event_file << event_msgs_ptr->events.size() / (event_msgs_ptr->events.back().ts.toSec() - event_msgs_ptr->events.front().ts.toSec()) << std::endl;
+    // event_file.close();
 
     // HAO: 数据交换
     {
@@ -654,6 +663,8 @@ bool ParseYaml(const std::string& filename, EventParams& event, RadarParams& rad
 
         visualize_marker_scale = config["visualize_marker_scale"].as<double>();
         visualize_doppler_scale = config["visualize_doppler_scale"].as<double>();
+        visualize_traj_total_time = config["visualize_traj_total_time"].as<double>();
+        visualize_traj_line_width = config["visualize_traj_line_width"].as<double>();
 
         ratio_inliers = config["ratio_inliers"].as<double>();
         LOG(ERROR) << "ratio_inliers = " << ratio_inliers << std::endl;
@@ -691,9 +702,9 @@ std::deque<TwistData2> estimate_buffer;
 visualization_msgs::Marker generateInstantTwistTrajectoryGradient(
     const geometry_msgs::TwistWithCovarianceStamped& twist,
     double dt_total = 0.4,
+    double line_width = 6,   
     double dt_step  = 0.01,
-    const std::string& frame_id = "radar",
-    double line_width = 6)
+    const std::string& frame_id = "radar")
 {
     visualization_msgs::Marker marker;
     marker.header.frame_id = frame_id;
@@ -714,9 +725,12 @@ visualization_msgs::Marker generateInstantTwistTrajectoryGradient(
         twist.twist.twist.angular.z
     );
     tf::Vector3 v_body(
-        80 * twist.twist.twist.linear.x,
-        80 * twist.twist.twist.linear.y,
-        80 * twist.twist.twist.linear.z
+        // 80 * twist.twist.twist.linear.x,
+        // 80 * twist.twist.twist.linear.y,
+        // 80 * twist.twist.twist.linear.z
+        5 * twist.twist.twist.linear.x,
+        5 * twist.twist.twist.linear.y,
+        5 * twist.twist.twist.linear.z
     );
 
     for (size_t i = 0; i <= steps; ++i)
@@ -774,14 +788,9 @@ visualization_msgs::Marker generateInstantTwistTrajectoryGradient(
  */
 void RUN()
 {
-    // std::deque<dvs_msgs::EventArray::Ptr> event_msgs_ptr_buffer;
-    // std::deque<sensor_msgs::PointCloud2::Ptr> radar_msgs_ptr_buffer;
-    // std::deque<sensor_msgs::Image::Ptr> img_msgs_ptr_buffer;
     while (ros::ok())
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));  // 控制循环频率，避免过高的 CPU 占用
-        // 与回调交换
-        // if(detector_thread != busy)
         {
             sensor_msgs::PointCloud2::Ptr radar_msgs_ptr;
             // radar_msgs_ptr->width = -1;
@@ -794,64 +803,30 @@ void RUN()
             {
                 std::lock_guard<std::mutex> lock(callback_mutex);
                 if (radar_buffer.empty() && event_buffer.empty()) // 都不存在数据集
-                {
                     continue;
-                }
-
 
                 if (!event_buffer.empty())
-                {
-                    // // 数据交换
-                    // // {     
-                    //     // 提取事件数据
-                        event_msgs_ptr_copy = event_buffer.front();
-                        event_buffer.pop_front();     
-                        // LOG(ERROR) << "Event Buffer = " << event_buffer.size() << std::endl;  
-                    // // } 
+                {   
+                    event_msgs_ptr_copy = event_buffer.front();
+                    event_buffer.pop_front();     
                 }
 
                 if (!radar_buffer.empty())
                 {
                     radar_msgs_ptr = radar_buffer.front();
                     radar_buffer.pop_front();
-                    LOG(ERROR) << "Doppler Buffer = " << radar_buffer.size() << std::endl;
                 }  
-                // else
-                // {
-                //     LOG(ERROR) << "No Event Input" << std::endl;
-                // }
-
-                /*{
-                    
-                    event_msgs_ptr_buffer.swap(event_buffer);
-                    radar_msgs_ptr_buffer.swap(radar_buffer);
-                    if(!image_buffer.empty())
-                        img_msgs_ptr_buffer.swap(image_buffer);
-                }*/
-
-
+           
                 while(!image_buffer.empty())
                 {
                     event_detector_->raw_img_buffer.push_back(image_buffer.front());
                     image_buffer.pop_front();
                 }
             }
-            // LOG(ERROR) << "Data Stream Input" << std::endl;
-            
-
+    
             // 事件数据
-            // if(event_msgs_copy.width > 0)
             if(event_msgs_ptr_copy != nullptr)
-            {
-                // LOG(ERROR) << "event_msgs_copy.width = " << event_msgs_copy.width << std::endl;
-                // LOG(ERROR) << "event_msgs_copy.sec = " << event_msgs_copy.header.stamp.toSec() << std::endl;
                 event_detector_->event_stream.push_back(event_msgs_ptr_copy); // HAO TODO: 修改 event_msgs_copy -> event_msgs_ptr_copy
-            }
-            // else
-            // {
-            //     LOG(ERROR) << "No Event Input" << std::endl;
-            //     continue;
-            // }  
             auto run_catch = std::chrono::high_resolution_clock::now();
 
             // 多普勒估计
@@ -859,151 +834,56 @@ void RUN()
             bool detetor_flag = false;
             if(radar_msgs_ptr != nullptr)
             {
-                // LOG(ERROR) << "DopplerEstimation" << std::endl;
-                // LOG(ERROR) << "radar_msgs_copy.width = " << radar_msgs_ptr->width << std::endl;
-                // auto doppler_start = std::chrono::high_resolution_clock::now();
                 detetor_flag = DopplerEstimation(radar_msgs_ptr);    
-                if(!detetor_flag)
-                {
-                    LOG(ERROR) << "DopplerEstimation Failed" << std::endl;
-                }
-                /*else
-                {
-                    auto doppler_end = std::chrono::high_resolution_clock::now();
-                    std::chrono::duration<double, std::milli> duration_ms = doppler_end - doppler_start;
-                    std::fstream doppler_time("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/doppler_T.csv", std::ios::out | std::ios::app);
-                    doppler_time << duration_ms.count() << std::endl;
-                    doppler_time.close();
-                }  */  
             }
-            // else
-            // {
-            //     LOG(ERROR) << "No Doppler Input" << std::endl;
-            //     continue;
-            // }   
            auto run_doppler = std::chrono::high_resolution_clock::now();
 
             // 传感器数据传入Detector
-            /*
-            LOG(ERROR) << "import sensor data into detector" << std::endl;
-            {
-                event_detector_->event_stream.insert(
-                    event_detector_->event_stream.end(),
-                    std::make_move_iterator(event_msgs_ptr_buffer.begin()),
-                    std::make_move_iterator(event_msgs_ptr_buffer.end())
-                );
-                event_msgs_ptr_buffer.clear();
-
-                while(!radar_msgs_ptr_buffer.empty())
-                {
-                   DopplerEstimation(radar_msgs_ptr_buffer.front());
-                   radar_msgs_ptr_buffer.pop_front();
-                }
-
-                event_detector_->raw_img_buffer.insert(
-                    event_detector_->raw_img_buffer.end(),
-                    std::make_move_iterator(img_msgs_ptr_buffer.begin()),
-                    std::make_move_iterator(img_msgs_ptr_buffer.end())
-                );
-
-                event_msgs_ptr_buffer.clear();
-                img_msgs_ptr_buffer.clear();
-            }*/
-
-            // std::lock_guard<std::mutex> lock(detector_mutex);
-            // LOG(ERROR) << "Detector" << std::endl;
             TwistData2 twist2;
-            // if (detetor_flag && event_detector_->Detector())
             std::chrono::time_point<std::chrono::high_resolution_clock> run_detector;
             if (event_detector_->Detector()) 
             {
                 run_detector = std::chrono::high_resolution_clock::now();
 
                 twist = event_detector_->GetTwist();
-                // LOG(ERROR) << std::setprecision(18) << "twist time diff = " << (twist.header.stamp - last_twist.header.stamp).toSec() << std::endl;
                 last_twist = twist;
-                if (pub_twist_.getNumSubscribers() > 0)
+                // if (pub_twist_.getNumSubscribers() > 0)
                 {
                     pub_twist_.publish(twist);
                 }
                 // 填充 twist_msg（瞬时机体速度和角速度）
 
                 visualization_msgs::Marker traj_marker =
-                    generateInstantTwistTrajectoryGradient(twist);
-
+                    generateInstantTwistTrajectoryGradient(twist, visualize_traj_total_time, 
+                                            visualize_traj_line_width);
                 twist_traj_marker_pub_.publish(traj_marker);
 
-                // tf::Transform transform;
-                // transform.setOrigin(tf::Vector3(0.0, 0.0, 0.0));
-                // // 设置旋转：绕 X 轴旋转 -45 度（pitch）
-                // tf::Quaternion q;
-                // double pitch_rad = -45.0 * M_PI / 180.0;
-                // q.setRPY(pitch_rad, 0.0, 0.0); // RPY顺序: roll, pitch, yaw
-                // q.normalize();  // 保证单位四元数
-                // transform.setRotation(q);
-                // br_ptr_->sendTransform(tf::StampedTransform(transform, ros::Time::now(), "body", "radar"));
-
-                // 发布一个tf关于body 转 radar pitch -45 度
-
-                // pub_twist_.publish(twist);
-
-                // std::ofstream detector_vel_file("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/detector2.tum",
-                //                                 std::ios::out | std::ios::app);
-                // detector_vel_file << std::setprecision(20) << twist.header.stamp.toSec() << " "
-                //                 << twist.twist.twist.linear.x << " " << twist.twist.twist.linear.y << " " << twist.twist.twist.linear.z << " "
-                //                 << twist.twist.twist.angular.x << " " << twist.twist.twist.angular.y << " " << twist.twist.twist.angular.z << std::endl;
-                // detector_vel_file.close();
-
                 TwistData2 twist2 = event_detector_->GetTwistData2();
-                // 临时添加
-                /*{
-                    std::fstream detector_file("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/detector.csv",std::ios::out | std::ios::app);
-                    detector_file << std::setprecision(18) << twist.header.stamp.toSec() << "," 
-                                << twist.twist.twist.linear.x << ","
-                                << twist.twist.twist.linear.y << ","
-                                << twist.twist.twist.linear.z << ","
-                                << twist.twist.twist.angular.x << ","
-                                << twist.twist.twist.angular.y << ","
-                                << twist.twist.twist.angular.z << std::endl;
-                    detector_file.close();
-
-                }*/
-                // estimator_->Estimate2(twist2);   // 只调试前端
+               
                 assert(twist2.timestamp == twist.header.stamp.toSec() && "Detector: Not Same");
+                
+                LOG(ERROR) << "Detector Sucessfully";
+
                 // 3-18 修改
                 {
                     std::lock_guard<std::mutex> lock(estimate_mutex);
                     estimate_buffer.push_back(twist2);
                 }
-                // LOG(ERROR) << "Push_Data" << std::endl;
             }
             auto run_end = std::chrono::high_resolution_clock::now();
 
-            //
+            // Debug: for run time
             {
                 std::chrono::duration<double, std::milli> duration_ms = run_end - run_start;
                 LOG(ERROR) << "run total: " << duration_ms.count() << " ms" << std::endl;
-                duration_ms = run_doppler - run_catch;
+                duration_ms = run_catch - run_start;
                 LOG(ERROR) << "run catch: " << duration_ms.count() << " ms" << std::endl;
-                duration_ms = run_detector - run_doppler;
+                duration_ms = run_detector - run_catch;
                 LOG(ERROR) << "run doppler: " << duration_ms.count() << " ms" << std::endl;
                 duration_ms = run_end - run_detector;
                 LOG(ERROR) << "run detector: " << duration_ms.count() << " ms" << std::endl;
                 // run_catch run_doppler run_detector
             }
-
-            // else        // Doppler 估计失败 或 Event Flow估计失败
-            // {
-            //     twist2 = TwistData2(event_detector_->GetProcessTime());
-            //     LOG(ERROR) << "Event Angular Failed" << std::endl;
-            // }
-
-            // // 3-18 修改
-            // {
-            //     std::lock_guard<std::mutex> lock(estimate_mutex);
-            //     estimate_buffer.push_back(twist2);
-            //     LOG(ERROR) << "Push_Data" << std::endl;
-            // }
         }      
     }
 }
@@ -1022,7 +902,6 @@ void RUN()
 void Esti_RUN()
 {
     std::deque<TwistData2> estimate_buffer_temp;
-    // std::vector<TwistData2> estimate_buffer_temp;
     while (ros::ok())
     {
         auto esti_start = std::chrono::high_resolution_clock::now();
@@ -1031,67 +910,29 @@ void Esti_RUN()
         {
             // 交换窗口
             estimate_mutex.lock();
-            if(estimate_buffer.empty())     // 前端没有数据
-            {
-                estimate_mutex.unlock();
-                // std::this_thread::sleep_for(std::chrono::milliseconds(2));  // 控制循环频率，避免过高的 CPU 占用
-                // LOG(ERROR) << "Estimate: No Valid Data" << std::endl;
-                // continue;
-            }
-            else                            // 前端有数据
-            {
-                estimate_buffer_temp.swap(estimate_buffer);          // 一次全部交换，降低交换频率
-                // estimate_buffer_temp.insert(estimate_buffer_temp.end(), 
-                //                 estimate_buffer.begin(), estimate_buffer.end());
-                // estimate_buffer.clear();
-                estimate_mutex.unlock();
-                // continue; // 下一次进行
-            }
-
-            // LOG(ERROR) << "estimate_buffer_temp.size = " << estimate_buffer_temp.size() << std::endl;
+            if(!estimate_buffer.empty())     // No data for estimate
+                estimate_buffer_temp.swap(estimate_buffer);    // get all data need to estimate
+            estimate_mutex.unlock();
             continue;
-        }
-        else
+        }  
+        while(!estimate_buffer_temp.empty())
         {
-            // LOG(ERROR) << "estimate_buffer_temp.size = " << estimate_buffer_temp.size() << std::endl;
-            
-            TwistData2 twist = estimate_buffer_temp.front();
-            /*{
-            LOG(ERROR) << "Get Front End Data " << std::endl;
-            LOG(ERROR) << "Timestamp = " << std::setprecision(20) << twist.timestamp << std::endl;
-            LOG(ERROR) << "linear_vel_vec_ = " << twist.linear_vel_vec_.transpose() << std::endl;
-            LOG(ERROR) << "angular_vel_vec_ = " << twist.angular_vel_vec_.transpose() << std::endl;
-            LOG(ERROR) << "best_inliers.size = " << twist.best_inliers.size() << std::endl;
-            LOG(ERROR) << "best_flow.size = " << twist.best_flow.size() << std::endl;
-            LOG(ERROR) << "point_cloud.size = " << twist.point_cloud.width << std::endl;
-            // estimator_->twist2_vec_.push_back(twist);
-            // estimate_buffer_temp.pop_front();
-            }*/
-
-            // LOG(ERROR) << "twist.timestamp = " << std::setprecision(20) << twist.timestamp << std::endl;
-
-            estimator_->PushEstimation(twist);
+            estimator_->PushEstimation(estimate_buffer_temp.front());
             estimate_buffer_temp.pop_front();
-        }
+        } 
+        auto esti_catch = std::chrono::high_resolution_clock::now();
 
-        // if(!estimator_->twist2_vec_.empty())
-        // estimator_->Estimate2();   // 只调试前端
-
-        // estimator_->Estimate3();      // 速度空间的优化
+        estimator_->Estimate();      // 速度空间的优化
         
-        // estimator_->LooseEstimate();     // 松耦合优化
-        // estimator_->Local_Estimate2();
-
-        // estimator_->Estimate2(twist);   // 只调试前端
-        // estimate_buffer_temp.pop_front();
-        // LOG(ERROR) << "Estimate " << std::endl;
         auto esti_end = std::chrono::high_resolution_clock::now();
-        //
+        // Debug Time
         {
             std::chrono::duration<double, std::milli> duration_ms = esti_end - esti_start;
             LOG(ERROR) << "esti total: " << duration_ms.count() << " ms" << std::endl;
-
-            // run_catch run_doppler run_detector
+            duration_ms = esti_catch - esti_start;
+            LOG(ERROR) << "esti catch: " << duration_ms.count() << " ms" << std::endl;
+            duration_ms = esti_end - esti_catch;
+            LOG(ERROR) << "esti estimate: " << duration_ms.count() << " ms" << std::endl;
         }
     } 
 }
@@ -1190,8 +1031,8 @@ int main(int argc,char ** argv)
     std::thread detect_thread(RUN);
     detect_thread.detach();
 
-    // std::thread estimate_thread(Esti_RUN);
-    // estimate_thread.detach();
+    std::thread estimate_thread(Esti_RUN);
+    estimate_thread.detach();
 
     // 使用AsyncSpinner来处理回调
     ros::AsyncSpinner spinner(3); // 启动2个线程

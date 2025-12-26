@@ -1414,7 +1414,7 @@ public:
 
         // 保存到csv文件中
         static bool clear_angle_norm_file = false;
-        std::fstream angle_norm_file;
+        /*std::fstream angle_norm_file;
         if(!clear_angle_norm_file)
         {
             angle_norm_file.open("/home/hao/Desktop/norm.csv", std::ios::out | std::ios::trunc);
@@ -1428,7 +1428,7 @@ public:
             angle_norm_file << flow_angle_vec[i] << ", " << flow_norm_vec[i] << std::endl;
         }
         angle_norm_file << "----" << std::endl;
-        angle_norm_file.close();
+        angle_norm_file.close();*/
     }
 
 

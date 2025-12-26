@@ -1,6 +1,0 @@
-# pose estimation in SE3
-linear_weight: 1.2
-linear_w_weight: 1
-linear_R_weight: 0
-omega_weight: 0.06 # 1
-omega_w_weight: 12 # 15

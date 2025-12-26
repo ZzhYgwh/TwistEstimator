@@ -5,7 +5,7 @@
     <br>
 <div>
 
-| [🛠️ Installation](#) | [🎥 Video](https://www.youtube.com/watch?v=l6CFHe1b_40&t=82s) | [📖 Paper](https://arxiv.org/pdf/2506.18443) |
+| [🛠️ Installation](#) | [🎥 Video](https://www.youtube.com/watch?v=Mdt7_QYpk0I) | [📖 Paper](https://arxiv.org/pdf/2506.18443) |
 |----------------------|------------------------------------------------------------|---------------------------------------------|
 
 
@@ -22,19 +22,19 @@ The TwistEstimator is designed to provide complementary 6-DoF velocity estimatio
 
 
 ## Supported Dataset
-Currently, we are only releasing DJI airborne data. All details will be released after the paper is officially published.
+All data is available on Google Drive.
 
 | Sequence | Lin.Max | Lin.Avg | Ang.Max | Ang.Avg | HDR  |
 |----------|---------|---------|---------|---------|------|
-| [dji1](https://drive.google.com/file/d/1t3aWiledN4z9AvQVwkIMkh-Bj-OLdh6s/view?usp=drive_link)     | 4.49    | 4.01    | 0.34    | 0.16    | 62   |
-| [dji2](https://drive.google.com/file/d/1ASDEsFF8jruKPVda0LUKFepQ7AQLgqK5/view?usp=drive_link)     | 4.51    | 3.47    | 0.54    | 0.16    | 63   |
-| [dji3](https://drive.google.com/file/d/1YfV7CcaLFXrTO7i7eUZA6ka3Gvqy8c0B/view?usp=drive_link)     | 6.30    | 3.74    | 0.56    | 0.18    | 62   |
-| hand1    | 4.20    | 0.92    | 0.42    | 0.16    | 89   |
-| hand2    | 2.32    | 0.87    | 0.45    | 0.17    | 92   |
-| hand3    | 4.39    | 1.17    | 0.41    | 0.16    | 97   |
-| road1    | 7.64    | **6.32** | _0.55_ | **0.28** | 96  |
-| road2    | **7.75** | _5.83_ | 0.54    | _0.27_  | _101_ |
-| road3    | _7.51_  | 5.40    | **0.65** | 0.17    | **109** |
+| [dji1](https://drive.google.com/file/d/1EGjIECPkZvd0QPdd44wqjKFQG6J8gHRi/view?usp=drive_link)     | 4.49    | 4.01    | 0.34    | 0.16    | 62   |
+| [dji2](https://drive.google.com/file/d/1gpAY3IG8W2JiQdmc44jdYIoEHjThT155/view?usp=drive_link)     | 4.51    | 3.47    | 0.54    | 0.16    | 63   |
+| [dji3](https://drive.google.com/file/d/1HkrwU8Tt_KIp-s4vsAU1Hm6k6qTQM3EQ/view?usp=drive_link)     | 6.30    | 3.74    | 0.56    | 0.18    | 62   |
+| [hand1](https://drive.google.com/file/d/1w3aQ0cOqPsKOPzxi3QeNO2J2JUdxIv21/view?usp=drive_link)    | 4.20    | 0.92    | 0.42    | 0.16    | 89   |
+| [hand2](https://drive.google.com/file/d/1GY3R4VX5v_VCHj6gm-A6gUkf9ez0kjtJ/view?usp=drive_link)    | 2.32    | 0.87    | 0.45    | 0.17    | 92   |
+| [hand3](https://drive.google.com/file/d/1Q-rbFDvy8G_CIbe6_TZ5s5h_o7H2Ig3e/view?usp=drive_link)    | 4.39    | 1.17    | 0.41    | 0.16    | 97   |
+| [road1](https://drive.google.com/file/d/19sKODVjBNx0Dv-Dla-E98-uDPNzf0ZrB/view?usp=drive_link)    | 7.64    | **6.32** | _0.55_ | **0.28** | 96  |
+| [road2](https://drive.google.com/file/d/1yk6WDe2unSzaXKIQQYIMmJmo1mXtbvO1/view?usp=drive_link)    | **7.75** | _5.83_ | 0.54    | _0.27_  | _101_ |
+| [road3](https://drive.google.com/file/d/1zEITqIR4tG9DPO_w4ExHgbQ1B_Uh53sb/view?usp=drive_link)    | _7.51_  | 5.40    | **0.65** | 0.17    | **109** |
 
 
 *Notation:* Linear velocity in m/s, angular velocity in rad/s, HDR in dB.  
@@ -82,61 +82,28 @@ After modifying the config file for your environment, you can run TwistEstimator
 
 For  Sequence **`dji`**:
 ```
-roslaunch twist_estimator test_estimator.launch			
+roslaunch twist_estimator dji.launch			
 ```
 
 For  Sequence **`hand`**:
 ```
-roslaunch twist_estimator test_estimator_hand.launch
+roslaunch twist_estimator hand.launch
 ```
 
 For  Sequence **`road`**:
 ```
-roslaunch twist_estimator test_estimator_road.launch
+roslaunch twist_estimator road.launch
 ```
 
 ## Evaluation
-Due to the randomness of velocity estimation, we have also made the original experimental data available in the paper available for comparison and reference in velocity estimation tasks.
-
-## Test
-
-### Test Front-End
+We provide an evaluation script to verify the estimation effectiveness and absolute velocity error.
 ```
-cd <path_to_workspace>
-source devel/setup.bash
-rosrun twist_estimator test_detector
-```
-or use GDB and ASan for debug
-```
-cd <path_to_workspace>/devel/lib/twist_estimator
-gdb test_detector
-```
-
-If use Dji Experiment data, add this script for combinate with timestamp and pointcloud of Radar
-```
-python3 <path_to_workspace>/src/TwistEstimator/scripts/combi_radar.py
-```
-
-### Test Back-End
-```
-cd <path_to_workspace>
-source devel/setup.bash
-rosrun twist_estimator test_estimator
-```
-or use GDB and ASan for debug
-```
-cd <path_to_workspace>/devel/lib/twist_estimator
-gdb test_estimator
-```
-
-If use Dji Experiment data, add this script for combinate with timestamp and pointcloud of Radar
-```
-python3 <path_to_workspace>/src/TwistEstimator/scripts/combi_radar.py
+bash eval.sh
 ```
 
 ## Citation
 
-If you use this project for any academic work, please cite our [paper](???).
+If you use this project for any academic work, please cite our [paper](https://arxiv.org/pdf/2506.18443).
 
 ```bibtex
 @article{lyu2025radar,

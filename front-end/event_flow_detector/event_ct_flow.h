@@ -783,13 +783,13 @@ public:
             }
         }
 
-        std::fstream optical_flow_file("/media/hao/hao2/228/test/lab/doc/optical_flow.txt", std::ios::out | std::ios::app);
+        /*std::fstream optical_flow_file("/media/hao/hao2/228/test/lab/doc/optical_flow.txt", std::ios::out | std::ios::app);
         optical_flow_file << "calculate w: A * w = b " << std::endl;
         optical_flow_file << "inliners: " << best_inliers.size() << std::endl;
         optical_flow_file << "A = " << A << std::endl;
         optical_flow_file << "b = " << b << std::endl;
         optical_flow_file << "res = " << residual.transpose() << std::endl;
-        optical_flow_file.close();
+        optical_flow_file.close();*/
 
         // dji seq outut
         // LOG_Velocity(radar_vel, "/media/hao/hao2/228/test/lab/detector.tum");
@@ -805,9 +805,9 @@ public:
     {
         if(!init_output)
         {
-            std::fstream ss(filename, std::ios::out | std::ios::trunc);
+            /*std::fstream ss(filename, std::ios::out | std::ios::trunc);
             ss.clear();
-            ss.close();
+            ss.close();*/
             // ss << "timestamp" << "," << "linear_x" << ", " << "linear_y" << ", " << "linear_z" << ", "
             //     << "angular_x" << ", " << "angular_y" << ", " << "angular_z" << std::endl;
             init_output = true;
@@ -949,6 +949,7 @@ public:
                 LOG(ERROR) << "not enough events" << std::endl;;
                 return false;
             }
+            auto process_time = std::chrono::high_resolution_clock::now();
             // LOG(ERROR) << "process_time_sec = " << process_time_sec << std::endl;
             // std::cout << "process_time_sec = " << process_time_sec << std::endl;
             // double accumu_start_time = AccumuConstractEventsWindows(process_time_sec);
@@ -977,7 +978,7 @@ public:
             // bool have_flow = CalculateOpFlowRANSAC();
 
             bool have_flow = CalculateOpFlowPrepointRANSAC();
-
+            auto optical_flow_time = std::chrono::high_resolution_clock::now();
             // bool have_flow = CalculateOpFlowLocalPlane();
 
             // bool have_flow = false;
@@ -1010,7 +1011,7 @@ public:
                 best_inliers.clear();
                 flow_pre_points.clear();
             } 
-
+            auto angular_vel_time = std::chrono::high_resolution_clock::now();
             PublishTimeImages(TimeImage1);
 
             // else
@@ -1027,6 +1028,18 @@ public:
             // time_file.open("/home/hao/Desktop/time.txt",std::ios::out | std::ios::app);
             // time_file << "Elapsed time: " << elapsed.count() << " seconds" << std::endl;
             // time_file.close();
+
+            {
+                LOG(ERROR) << "total detector: " << elapsed.count() << "seconds";
+                elapsed = process_time - start;
+                LOG(ERROR) << "process time: " << elapsed.count() << "seconds";
+                elapsed = optical_flow_time - process_time;
+                LOG(ERROR) << "optical flow: " << elapsed.count() << "seconds";
+                elapsed = angular_vel_time - optical_flow_time;
+                LOG(ERROR) << "angular vel:  " << elapsed.count() << "seconds";
+                elapsed = end - angular_vel_time;
+                LOG(ERROR) << "publish:      " << elapsed.count() << "seconds";                
+            }
 
             // Prepare for back-end
             // std::cout << std::setprecision(20) << "twist_.header.stamp = " << twist_.header.stamp.toSec()

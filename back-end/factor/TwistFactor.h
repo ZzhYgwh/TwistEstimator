@@ -19,10 +19,6 @@
 
 #include <chrono>
 
-// #include "DebugFile.cpp"
-
-// #include "visual_odometry/integration_base.h"
-
 
 // 构建反对称矩阵
 // 特殊给2D 像素点使用
@@ -3543,10 +3539,10 @@ public:
 
     // LOG(ERROR) << "Doppler Loss: " << ((residuals_temp > 0.3)? "True": "False") << std::endl;          
 
-    std::fstream linear_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/linear_res.txt",
+    /*std::fstream linear_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/linear_res.txt",
                               std::ios::out | std::ios::app);
     linear_file << residuals_temp << std::endl;
-    linear_file.close();
+    linear_file.close();*/
 
     std::chrono::time_point<std::chrono::high_resolution_clock> time3;
 
@@ -4210,8 +4206,8 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
                                 << residual.norm() << std::endl;
         // LOG(ERROR) << "Event Loss: " << ((residual.norm() > 0.3)? "True": "False") << std::endl; 
 
-        std::fstream angular_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/angular_res.txt",
-                                  std::ios::out | std::ios::app);
+        /*std::fstream angular_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/angular_res.txt",
+                                  std::ios::out | std::ios::app);*/
         // angular_file << Output_M(residual) << std::endl;
         angular_file << residual.norm() << std::endl;
         angular_file.close();
@@ -5069,8 +5065,8 @@ class ImuFactor : public ceres::CostFunction, SplitSpineView{
                               << residual.norm() << std::endl;
       // LOG(ERROR) << "Event Loss: " << ((residual.norm() > 0.3)? "True": "False") << std::endl; 
 
-      std::fstream imu_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_res.txt",
-                                std::ios::out | std::ios::app);
+      /*std::fstream imu_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_res.txt",
+                                std::ios::out | std::ios::app);*/
       // angular_file << Output_M(residual) << std::endl;
       imu_file << residual.norm() << std::endl;
       imu_file.close();

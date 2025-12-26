@@ -95,9 +95,9 @@ class R3Spline {
       : dt_ns_(time_interval_ns), start_t_ns_(start_time_ns) {
     pow_inv_dt_[0] = 1.0;
     pow_inv_dt_[1] = S_TO_NS / dt_ns_;
-    std::fstream test_file("/home/hao/Desktop/test_eigen.txt",std::ios::out|std::ios::app);
+    /*std::fstream test_file("/home/hao/Desktop/test_eigen.txt",std::ios::out|std::ios::app);
     test_file << "VecD Options: " << VecD::Options << std::endl;
-    test_file.close();
+    test_file.close();*/
     for (size_t i = 2; i < N; i++) {
       pow_inv_dt_[i] = pow_inv_dt_[i - 1] * pow_inv_dt_[1];
     }

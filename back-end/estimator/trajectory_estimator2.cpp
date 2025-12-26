@@ -2040,7 +2040,7 @@ void TrajectoryEstimator2::AddEventFlowMeasurementAnalytic3(
 
       EvaluateCostFunctionWithJacobians(cost_function, vec.data(), residuals, jacobians);
 
-      std::ofstream residual_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/res.txt", std::ios::out | std::ios::app);
+      /*std::ofstream residual_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/res.txt", std::ios::out | std::ios::app);
       residual_file << residuals << std::endl;
       residual_file.close();
 
@@ -2057,7 +2057,7 @@ void TrajectoryEstimator2::AddEventFlowMeasurementAnalytic3(
       // jac_knot_file << "\n";
       // jac_knot_file << "done " << std::endl;
       jac_knot_file << std::endl;
-      jac_knot_file.close();
+      jac_knot_file.close();*/
     }
 
 
@@ -2354,7 +2354,7 @@ void TrajectoryEstimator2::AddImuMeasurementAnalytic(
 
       EvaluateCostFunctionWithJacobians(cost_function, vec.data(), residuals, jacobians);
 
-      std::ofstream residual_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/res.txt", std::ios::out | std::ios::app);
+      /*std::ofstream residual_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/res.txt", std::ios::out | std::ios::app);
       residual_file << residuals << std::endl;
       residual_file.close();
 
@@ -2371,7 +2371,7 @@ void TrajectoryEstimator2::AddImuMeasurementAnalytic(
       // jac_knot_file << "\n";
       // jac_knot_file << "done " << std::endl;
       jac_knot_file << std::endl;
-      jac_knot_file.close();
+      jac_knot_file.close();*/
     }
 
 

@@ -24,7 +24,7 @@ class RTKVelSaver:
 
         # subscriber
         self.sub = rospy.Subscriber(
-            "/rtk/vel",
+            "/vrpn_client_node/uav1/vel",
             TwistStamped,
             self.callback,
             queue_size=1000

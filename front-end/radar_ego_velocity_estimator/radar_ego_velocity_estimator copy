@@ -355,7 +355,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
 
   // file.open("/home/hao/Desktop/doppler_debug.txt", std::ios::out | std::ios::app);
   // std::fstream file("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/doppler_debug.txt", std::ios::out | std::ios::app);
-  std::fstream file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler_debug.txt", std::ios::out | std::ios::app);
+  // std::fstream file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler_debug.txt", std::ios::out | std::ios::app);
 
   // if(config_.radar_type == "ti_mmwave")
   //   for (auto& field : radar_scan_msg.fields) {
@@ -366,7 +366,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
 
   bool success = false;
   pcl::fromROSMsg (radar_scan_msg, *radar_scan);
-  file << "radar_scan.size = " << radar_scan->size() << std::endl;
+  // file << "radar_scan.size = " << radar_scan->size() << std::endl;
   // std::chrono::time_point<std::chrono::high_resolution_clock> doppler_start_time = std::chrono::high_resolution_clock::now();
   std::chrono::time_point<std::chrono::high_resolution_clock> doppler_init_time = std::chrono::high_resolution_clock::now();
   std::chrono::time_point<std::chrono::high_resolution_clock> doppler_ransac_start_time;
@@ -443,7 +443,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       const double median = v_dopplers[n];
 
       // ROS_INFO("checkout zero velocity = %f, actually = %f", config_.thresh_zero_velocity, median);  
-      file << "checkout zero velocity = " << config_.thresh_zero_velocity << ", actually = " << median << std::endl;
+      // file << "checkout zero velocity = " << config_.thresh_zero_velocity << ", actually = " << median << std::endl;
       if (median < config_.thresh_zero_velocity)
       {
         // ROS_INFO_STREAM_THROTTLE(0.5, kPrefix << "Zero velocity detected!");
@@ -474,8 +474,8 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       }
       else
       {
-        file << "False: velocity median < config_.thresh_zero_velocity " << "[" << median << "," << config_.thresh_zero_velocity << "]" << std::endl;
-        file << "valid_targets.size =  " << valid_targets.size() << std::endl;
+        // file << "False: velocity median < config_.thresh_zero_velocity " << "[" << median << "," << config_.thresh_zero_velocity << "]" << std::endl;
+        // file << "valid_targets.size =  " << valid_targets.size() << std::endl;
 
         std::chrono::time_point<std::chrono::high_resolution_clock> doppler_filter_time = std::chrono::high_resolution_clock::now();
 
@@ -488,7 +488,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
         for (const auto& v_pt : valid_targets)
             radar_data.row(idx++) = Vector4(v_pt[idx_.normalized_x], v_pt[idx_.normalized_y], v_pt[idx_.normalized_z], v_pt[idx_.doppler]);
 
-        file << "check 1 : radar_data = " << radar_data << std::endl;
+        // file << "check 1 : radar_data = " << radar_data << std::endl;
 
         // 筛选 2 * sigma 的数值 [0.6827 0.9545 0.9973]
         Matrix radar_filtered;  // 初始化矩阵
@@ -501,9 +501,9 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
             double mean_v = velocity.mean();
             double std_v = sqrt(((velocity.array() - mean_v).square().sum()) / (velocity.size() - 1));
 
-            std::fstream radar_doppler_std_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler_std.csv", std::ios::out | std::ios::app);
+            /*std::fstream radar_doppler_std_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/doppler_std.csv", std::ios::out | std::ios::app);
             radar_doppler_std_file << std_v << std::endl;
-            radar_doppler_std_file.close();
+            radar_doppler_std_file.close();*/
 
             // **计算逻辑掩码，判断是否在 2 * sigma 内**
             Eigen::Array<bool, Eigen::Dynamic, 1> mask = (velocity.array() >= mean_v - 2 * std_v) && 
@@ -517,7 +517,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
                 }
             }
 
-            file << "check 5 : valid_rows.size() = " << valid_rows.size() << std::endl;
+            // file << "check 5 : valid_rows.size() = " << valid_rows.size() << std::endl;
             if (valid_rows.size() < 3)
                 return false;
 
@@ -533,8 +533,8 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
         radar_data = radar_filtered;  // 将筛选后的数据赋回 radar_data
         valid_targets = valid_targets_filted;  // 更新有效目标数据
 
-        file << "check 2 : radar_data = " << radar_data.rows() 
-            << ", valid_targets = " << valid_targets.size() << std::endl;
+        /*file << "check 2 : radar_data = " << radar_data.rows() 
+            << ", valid_targets = " << valid_targets.size() << std::endl;*/
 
         // 3-17 修改
         /*{
@@ -553,11 +553,11 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
           std::vector<uint> inlier_idx_best;
           std::vector<uint> outlier_idx_best;
           success = solve3DFullRansac(radar_data, v_r, sigma_v_r, inlier_idx_best, outlier_idx_best);
-          file << "check 2 : radar_data = " << radar_data << std::endl;
+          /*file << "check 2 : radar_data = " << radar_data << std::endl;
           file << "solve 3D Ransac " << ((success)? "True":"False") << std::endl;
           file << "solve v_r =  " << v_r(0) << ", " << v_r(1) << ", " << v_r(2) << std::endl;
 
-          file << "check inlier_idx_best size = " << inlier_idx_best.size() << std::endl;
+          file << "check inlier_idx_best size = " << inlier_idx_best.size() << std::endl;*/
 
           // Insert inlier points to the cloud
           for (const auto& idx : inlier_idx_best)
@@ -574,9 +574,9 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
             radar_scan_inlier->push_back(toRadarPointCloudType(item, idx_));
             // radar_scan_inlier->points.emplace_back(toRadarPointCloudType(item, idx_));
           success = solve3DFull(radar_data, v_r, sigma_v_r);
-          file << "check 2 : radar_data = " << radar_data << std::endl;
+          /*file << "check 2 : radar_data = " << radar_data << std::endl;
 
-          file << "solve 3D Full " << ((success)? "True":"False") << std::endl;
+          file << "solve 3D Full " << ((success)? "True":"False") << std::endl;*/
         }
 
         doppler_ransac_end_time = std::chrono::high_resolution_clock::now();
@@ -600,7 +600,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
     radar_scan_outlier->width  = radar_scan_outlier->size();
 
 
-    file << "inliers = " << inlier_radar_msg.width << ", outlier = " << radar_scan_outlier->width << std::endl;
+    // file << "inliers = " << inlier_radar_msg.width << ", outlier = " << radar_scan_outlier->width << std::endl;
 
     pcl::PCLPointCloud2 tmp_o;
     pcl::toPCLPointCloud2<RadarPointCloudType>(*radar_scan_outlier, tmp_o);
@@ -618,12 +618,12 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
   // file << "sigma_v_r = [" << sigma_v_r.transpose() << "]" << std::endl;
 
 
-  file << "inliers = " << inlier_radar_msg.width << std::endl;
+  // file << "inliers = " << inlier_radar_msg.width << std::endl;
 
 
   std::chrono::time_point<std::chrono::high_resolution_clock> end_time = std::chrono::high_resolution_clock::now();
 
-  {
+  /*{
       std::fstream time_total("/home/hao/Desktop/radar-event-new/src/TwistEstimator/output/time.csv", std::ios::out | std::ios::app);
       std::chrono::duration<double, std::milli> elapsed;
       elapsed = end_time - doppler_start_time;
@@ -642,7 +642,7 @@ bool RadarEgoVelocityEstimator::estimate(const sensor_msgs::PointCloud2& radar_s
       file <<  "Publish: " << elapsed.count() << std::endl;
       time_total << elapsed.count() << std::endl;
   }
-  file.close();
+  file.close();*/
   return success;
 }
 

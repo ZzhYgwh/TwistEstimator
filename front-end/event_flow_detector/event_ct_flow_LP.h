@@ -2554,11 +2554,11 @@ public:
             // LOG(INFO) << "b(i) = " << b(i) << std::endl;
         }
 
-        std::fstream angular_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/LSQ_Ang.txt", 
+        /*std::fstream angular_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/LSQ_Ang.txt", 
                                     std::ios::out | std::ios::app);
         angular_file << "A = [" << A << "]" << std::endl;
         angular_file << "b = [" << b << "]" << std::endl;
-        angular_file.close();
+        angular_file.close();*/
         Eigen::Vector3d angular_vec = A.colPivHouseholderQr().solve(b);
 
         // LOG(ERROR) << "A = " << A << std::endl;

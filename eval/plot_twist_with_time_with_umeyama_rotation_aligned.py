@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, filtfilt
 from scipy import interpolate
 
+import numpy as np
+from scipy.interpolate import interp1d
+
 # 设置全局字体
 plt.rcParams.update({
     "font.family": "serif",
@@ -18,9 +21,9 @@ plt.rcParams.update({
 
 # 1. 加载数据
 # camera_twist = pd.read_csv('../../../dji8-5-20/twist.tum', header=None, delim_whitespace=True)
-camera_twist = pd.read_csv('gt.tum', header=None, delim_whitespace=True) # twist
-detector = pd.read_csv('front_out.tum', header=None, delim_whitespace=True) # detector2 ./river.tum
-estimator = pd.read_csv('back_out.tum', header=None, delim_whitespace=True) # estimate.tum
+camera_twist = pd.read_csv('../output/gt.twist', header=None, delim_whitespace=True) # twist
+detector = pd.read_csv('../output/detector.twist', header=None, delim_whitespace=True) # detector2 ./river.tum front
+estimator = pd.read_csv('../output/estimate.twist', header=None, delim_whitespace=True) # estimate.tum front.tum back.tum
 
 # 2. 提取前7列的时间戳、线速度、角速度
 camera_time = camera_twist.iloc[:, 0].values  # 第一列是时间
@@ -289,15 +292,6 @@ plt.tight_layout(rect=[0, 0, 1, 0.96])
 plt.savefig("angular_velocity_comparison.pdf", dpi=900, bbox_inches='tight')
 plt.show()
 
-
-## 线速度误差分析
-import numpy as np
-from scipy.interpolate import interp1d
-
-# 假设数据为 numpy 数组
-# camera_time: (N,), camera_angular_velocity: (N, 3)
-# detector_time: (M,), detector_angular_velocity: (M, 3)
-
 # 对 detector 的每个轴进行插值
 interp_fx = interp1d(detector_time, detector_linear_velocity[:, 0], kind='linear', fill_value='extrapolate')
 interp_fy = interp1d(detector_time, detector_linear_velocity[:, 1], kind='linear', fill_value='extrapolate')
@@ -313,37 +307,11 @@ detector_interp_linear_velocity = np.stack([
 # 误差向量
 linear_error = detector_interp_linear_velocity - camera_linear_velocity
 
-# 每帧的欧几里得误差
-euclidean_error = np.linalg.norm(linear_error, axis=1)
+abs_error = np.mean(np.abs(linear_error))
+print(f"Detector  Linear  velocity ABSE: {abs_error:.6f} m/s")
 
-# RMSE
-rmse = np.sqrt(np.mean(euclidean_error**2))
-
-print(f"Linear velocity RMSE: {rmse:.6f} rad/s")
-
-epsilon = 1e-6  # 避免除以0
-
-# 欧几里得范数
-true_norm = np.linalg.norm(camera_linear_velocity, axis=1)
-error_norm = np.linalg.norm(detector_interp_linear_velocity - camera_linear_velocity, axis=1)
-
-# 相对误差
-relative_error = error_norm / (true_norm + epsilon)
-
-# 计算平均相对误差或中位数等
-mean_relative_error = np.mean(relative_error)
-print(f"Mean Relative Linear Velocity Error: {mean_relative_error:.4f}")
-
-
-
+### -------------- Detector -------------
 ## 角速度误差分析
-import numpy as np
-from scipy.interpolate import interp1d
-
-# 假设数据为 numpy 数组
-# camera_time: (N,), camera_angular_velocity: (N, 3)
-# detector_time: (M,), detector_angular_velocity: (M, 3)
-
 # 对 detector 的每个轴进行插值
 interp_fx = interp1d(detector_time, detector_angular_velocity[:, 0], kind='linear', fill_value='extrapolate')
 interp_fy = interp1d(detector_time, detector_angular_velocity[:, 1], kind='linear', fill_value='extrapolate')
@@ -359,7 +327,63 @@ detector_interp_angular_velocity = np.stack([
 # 误差向量
 angular_error = detector_interp_angular_velocity - camera_angular_velocity
 
-# detector_time 和 linear_error angular_error 需要保存
+# 构造 DataFrame
+error_df = pd.DataFrame({
+    'time': camera_time,
+    'linear_x': linear_error[:, 0],
+    'linear_y': linear_error[:, 1],
+    'linear_z': linear_error[:, 2],
+    'angular_x': angular_error[:, 0],
+    'angular_y': angular_error[:, 1],
+    'angular_z': angular_error[:, 2]
+})
+
+# 保存为 CSV
+error_df.to_csv('twist_estimator_detector_error.csv', index=False)
+# print("保存成功：twist_estimator_error.csv")
+
+abs_error = np.mean(np.abs(angular_error))
+print(f"Detector  Angular velocity ABSE: {abs_error:.6f} rad/s")
+epsilon = 1e-6  # 避免除以0
+
+
+
+### -------------- Estimator -------------
+## 线速度误差分析
+# 对 detector 的每个轴进行插值
+interp_fx = interp1d(estimator_time, estimator_linear_velocity[:, 0], kind='linear', fill_value='extrapolate')
+interp_fy = interp1d(estimator_time, estimator_linear_velocity[:, 1], kind='linear', fill_value='extrapolate')
+interp_fz = interp1d(estimator_time, estimator_linear_velocity[:, 2], kind='linear', fill_value='extrapolate')
+
+# 插值到 camera_time 上
+estimator_interp_linear_velocity = np.stack([
+    interp_fx(camera_time),
+    interp_fy(camera_time),
+    interp_fz(camera_time)
+], axis=1)
+
+# 误差向量
+linear_error = estimator_interp_linear_velocity - camera_linear_velocity
+
+abs_error = np.mean(np.abs(linear_error))
+print(f"Estimator Linear  velocity ABSE: {abs_error:.6f} m/s")
+
+
+## 角速度误差分析
+# 对 detector 的每个轴进行插值
+interp_fx = interp1d(estimator_time, estimator_angular_velocity[:, 0], kind='linear', fill_value='extrapolate')
+interp_fy = interp1d(estimator_time, estimator_angular_velocity[:, 1], kind='linear', fill_value='extrapolate')
+interp_fz = interp1d(estimator_time, estimator_angular_velocity[:, 2], kind='linear', fill_value='extrapolate')
+
+# 插值到 camera_time 上
+estimator_interp_angular_velocity = np.stack([
+    interp_fx(camera_time),
+    interp_fy(camera_time),
+    interp_fz(camera_time)
+], axis=1)
+
+# 误差向量
+angular_error = estimator_interp_angular_velocity - camera_angular_velocity
 
 # 构造 DataFrame
 error_df = pd.DataFrame({
@@ -373,30 +397,10 @@ error_df = pd.DataFrame({
 })
 
 # 保存为 CSV
-error_df.to_csv('twist_estimator_error.csv', index=False)
-print("保存成功：twist_estimator_error.csv")
+error_df.to_csv('twist_estimator_estimator_error.csv', index=False)
+# print("保存成功：twist_estimator_error.csv")
 
-
-# 每帧的欧几里得误差
-euclidean_error = np.linalg.norm(angular_error, axis=1)
-
-# RMSE
-rmse = np.sqrt(np.mean(euclidean_error**2))
-
-print(f"Angular velocity RMSE: {rmse:.6f} rad/s")
-
+abs_error = np.mean(np.abs(angular_error))
+print(f"Estimator Angular velocity ABSE: {abs_error:.6f} rad/s")
 epsilon = 1e-6  # 避免除以0
-
-# 欧几里得范数
-true_norm = np.linalg.norm(camera_angular_velocity, axis=1)
-error_norm = np.linalg.norm(detector_interp_angular_velocity - camera_angular_velocity, axis=1)
-
-# 相对误差
-relative_error = error_norm / (true_norm + epsilon)
-
-# 计算平均相对误差或中位数等
-mean_relative_error = np.mean(relative_error)
-print(f"Mean Relative Angular Velocity Error: {mean_relative_error:.4f}")
-
-
 

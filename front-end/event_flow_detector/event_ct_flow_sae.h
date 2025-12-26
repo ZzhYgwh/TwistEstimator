@@ -52,18 +52,18 @@ public:
             std::copy(K_cv.ptr<double>(), K_cv.ptr<double>() + 9, cam_info.K.begin());
 
             for (size_t i = 0; i < 9; ++i) {
-                LOG(ERROR) << cam_info.K[i] << " ";
+                // LOG(ERROR) << cam_info.K[i] << " ";
             }
 
             // 直接赋值
             cam_info.distortion_model = "plumb_bob";
             cam_info.D = {e_params.k1, e_params.k2, e_params.p1, e_params.p2, e_params.k3};
 
-            LOG(ERROR) << "Distortion Coefficients: ";
+            // LOG(ERROR) << "Distortion Coefficients: ";
             for (size_t i = 0; i < cam_info.D.size(); i++) {
-                LOG(ERROR) << cam_info.D[i] << " ";
+                // LOG(ERROR) << cam_info.D[i] << " ";
             }
-            LOG(ERROR) << std::endl;
+            // LOG(ERROR) << std::endl;
 
             // Set P matrix (assuming no stereo calibration)
             cam_info.P[0] = cam_info.K[0];
@@ -121,31 +121,63 @@ public:
         }
     }*/
 
+    // void AccumulateTimeImage()
+    // {
+    //     auto& sae_on  = sae_ptr_->getSAE(1);
+    //     auto& sae_off = sae_ptr_->getSAE(0);
+
+    //     const int width  = sae_on.cols;
+    //     const int height = sae_on.rows;
+
+    //     // #pragma omp parallel for schedule(static)
+    //     for (int i = 0; i < static_cast<int>(event_buffer.size()); ++i)
+    //     {
+    //         const auto& e = event_buffer[i];
+    //         int x = e.x;
+    //         int y = e.y;
+    //         if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height)
+    //             continue;
+
+    //         // 根据事件极性选择对应的 SAE
+    //         if (e.polarity)
+    //             sae_on.at<double>(y, x) = e.ts.toSec();
+    //         else
+    //             sae_off.at<double>(y, x) = e.ts.toSec();
+    //     }
+    // }
+
     void AccumulateTimeImage()
     {
         auto& sae_on  = sae_ptr_->getSAE(1);
         auto& sae_off = sae_ptr_->getSAE(0);
 
-        const int width  = sae_on.cols;
-        const int height = sae_on.rows;
+        const int w = sae_on.cols;
+        const int h = sae_on.rows;
 
-        #pragma omp parallel for schedule(static)
-        for (int i = 0; i < static_cast<int>(event_buffer.size()); ++i)
+        // 必须是 double*
+        double* on_ptr  = sae_on.ptr<double>();
+        double* off_ptr = sae_off.ptr<double>();
+
+        const int N = static_cast<int>(event_buffer.size());
+
+        for (int i = 0; i < N; ++i)
         {
             const auto& e = event_buffer[i];
-            int x = e.x;
-            int y = e.y;
-            if ((unsigned)x >= (unsigned)width || (unsigned)y >= (unsigned)height)
+            const int x = e.x;
+            const int y = e.y;
+
+            if ((unsigned)x >= (unsigned)w || (unsigned)y >= (unsigned)h)
                 continue;
 
-            // 根据事件极性选择对应的 SAE
+            const int idx = y * w + x;
+            const double t = e.ts.toSec();
+
             if (e.polarity)
-                sae_on.at<double>(y, x) = e.ts.toSec();
+                on_ptr[idx] = t;
             else
-                sae_off.at<double>(y, x) = e.ts.toSec();
+                off_ptr[idx] = t;
         }
     }
-
 
 
     // 构建反对称矩阵
@@ -164,84 +196,184 @@ public:
         return std::vector<int>(idx.begin(), idx.begin() + sample_num);
     }
 
-    void RansacPlaneFit(const Eigen::MatrixXd& A, double threshold,
-                        Eigen::Vector4d& best_normal,
-                        int max_iterations = 8) {
+    // void RansacPlaneFit(const Eigen::MatrixXd& A, double threshold,
+    //                     Eigen::Vector4d& best_normal,
+    //                     int max_iterations = 8) {
 
-        int N = A.rows();
+    //     int N = A.rows();
+    //     int max_inlier_count = 0;
+    //     std::vector<int> best_inliers_index;
+    //     best_inliers_index.clear();
+    //     Eigen::MatrixXd A_sample(4,4);
+
+    //     for (int iter = 0; iter < max_iterations; ++iter) {
+    //         auto sample_idx = RandomSample(N, 4);
+            
+    //         for (int i=0; i<4; ++i)
+    //             A_sample.row(i) = A.row(sample_idx[i]);
+
+    //         // Eigen::JacobiSVD<Eigen::MatrixXd> svd(A_sample, Eigen::ComputeFullV);
+    //         // Eigen::Vector4d normal = svd.matrixV().col(3);
+    //         // 10-18 修改
+    //         Eigen::Matrix4d ATA = A_sample.transpose() * A_sample;
+    //         Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> eig(ATA);
+ 
+    //         Eigen::Vector4d normal = eig.eigenvectors().col(0); // 最小特征值对应列
+    //         double denom = normal.head<3>().norm();
+
+    //         double inv_norm = 1.0 / denom;
+    //         /*
+    //         std::vector<int> current_inliers;
+    //         for (int i=0; i<N; ++i) {
+    //             Eigen::Vector4d pt = A.row(i);
+    //             double dist = std::abs(normal.dot(pt)) / normal.head<3>().norm();
+    //             // 10-18 修改
+
+    //             // LOG(ERROR) << "dist = " << dist << std::endl;
+    //             if (dist < threshold)
+    //                 current_inliers.push_back(i);
+    //         }*/
+    //         // 10-18 修改
+    //         Eigen::VectorXd dists = (A * normal).cwiseAbs() * inv_norm;
+
+    //         std::vector<int> current_inliers;
+    //         current_inliers.reserve(N);
+    //         for (int i = 0; i < N; ++i)
+    //             if (dists(i) < threshold) current_inliers.push_back(i);
+
+            
+    //         if ((int)current_inliers.size() > max_inlier_count) {
+    //             max_inlier_count = current_inliers.size();
+    //             best_inliers_index = current_inliers;
+    //             // best_normal = normal;
+
+    //             // LOG(ERROR) << "A_sample = " << A_sample << std::endl;
+    //             // LOG(ERROR) << "normal = " << A_sample << std::endl;
+    //             // LOG(ERROR) << "max_inlier_count = " << max_inlier_count << std::endl;
+    //         }
+    //     }
+        
+    //     int best_N = best_inliers_index.size();
+        
+    //     Eigen::MatrixXd A_best(best_N,4);
+    //     if(best_N != 0)
+    //         for (int i=0; i<best_N; ++i)
+    //             A_best.row(i) = A.row(best_inliers_index[i]);
+    //     else
+    //     {
+    //         A_best.resize(A.rows(), A.cols());
+    //         A_best = A;
+    //     }
+
+    //     // LOG(ERROR) << "A_best = " << A_best << std::endl;
+    //     Eigen::JacobiSVD<Eigen::MatrixXd> svd(A_best, Eigen::ComputeFullV);
+    //     best_normal = svd.matrixV().col(3);
+
+    //     // LOG(ERROR) << "best_inliers_index.size = " << best_inliers_index.size() << std::endl;
+    //     // LOG(ERROR) << "best_normal = " << best_normal.transpose() << std::endl;
+
+    //     // LOG(ERROR) << "fit error = " << A_best * best_normal << std::endl;
+    // }
+
+    // 2025-12-15 修改此处
+    void RansacPlaneFit(const Eigen::MatrixXd& A,
+                    double threshold,
+                    Eigen::Vector4d& best_normal,
+                    int max_iterations = 8)
+    {
+        std::chrono::time_point<std::chrono::high_resolution_clock> flow_ransac_start = std::chrono::high_resolution_clock::now();
+        const int N = A.rows();
+        if (N < 4) {
+            best_normal.setZero();
+            return;
+        }
+
         int max_inlier_count = 0;
         std::vector<int> best_inliers_index;
-        best_inliers_index.clear();
-        Eigen::MatrixXd A_sample(4,4);
+        best_inliers_index.reserve(N);
 
-        for (int iter = 0; iter < max_iterations; ++iter) {
+        Eigen::Matrix4d A_sample;                 // 固定大小
+        std::vector<int> current_inliers;
+        current_inliers.reserve(N);
+
+        for (int iter = 0; iter < max_iterations; ++iter)
+        {
+            // ---------- 1. 随机采样 ----------
             auto sample_idx = RandomSample(N, 4);
-            
-            for (int i=0; i<4; ++i)
+            for (int i = 0; i < 4; ++i)
                 A_sample.row(i) = A.row(sample_idx[i]);
 
-            // Eigen::JacobiSVD<Eigen::MatrixXd> svd(A_sample, Eigen::ComputeFullV);
-            // Eigen::Vector4d normal = svd.matrixV().col(3);
-            // 10-18 修改
+            // ---------- 2. 估计平面法向 ----------
             Eigen::Matrix4d ATA = A_sample.transpose() * A_sample;
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> eig(ATA);
- 
-            Eigen::Vector4d normal = eig.eigenvectors().col(0); // 最小特征值对应列
-            double denom = normal.head<3>().norm();
+            Eigen::Vector4d normal = eig.eigenvectors().col(0); // 最小特征值
 
-            double inv_norm = 1.0 / denom;
-            /*
-            std::vector<int> current_inliers;
-            for (int i=0; i<N; ++i) {
-                Eigen::Vector4d pt = A.row(i);
-                double dist = std::abs(normal.dot(pt)) / normal.head<3>().norm();
-                // 10-18 修改
+            const double denom = normal.head<3>().norm();
+            if (denom < 1e-8)     // 数值保护
+                continue;
 
-                // LOG(ERROR) << "dist = " << dist << std::endl;
+            const double inv_norm = 1.0 / denom;
+
+            // ---------- 3. 计算内点（手写，避免 A*normal） ----------
+            current_inliers.clear();
+
+            const double nx = normal(0);
+            const double ny = normal(1);
+            const double nz = normal(2);
+            const double d  = normal(3);
+
+            for (int i = 0; i < N; ++i)
+            {
+                const Eigen::Vector4d& r = A.row(i);
+                const double dist =
+                    std::abs(r(0)*nx + r(1)*ny + r(2)*nz + d) * inv_norm;
+
                 if (dist < threshold)
                     current_inliers.push_back(i);
-            }*/
-            // 10-18 修改
-            Eigen::VectorXd dists = (A * normal).cwiseAbs() * inv_norm;
+            }
 
-            std::vector<int> current_inliers;
-            current_inliers.reserve(N);
-            for (int i = 0; i < N; ++i)
-                if (dists(i) < threshold) current_inliers.push_back(i);
-
-            
-            if ((int)current_inliers.size() > max_inlier_count) {
+            // ---------- 4. 更新最优模型 ----------
+            if ((int)current_inliers.size() > max_inlier_count)
+            {
                 max_inlier_count = current_inliers.size();
                 best_inliers_index = current_inliers;
-                // best_normal = normal;
-
-                // LOG(ERROR) << "A_sample = " << A_sample << std::endl;
-                // LOG(ERROR) << "normal = " << A_sample << std::endl;
-                // LOG(ERROR) << "max_inlier_count = " << max_inlier_count << std::endl;
             }
         }
-        
-        int best_N = best_inliers_index.size();
-        
-        Eigen::MatrixXd A_best(best_N,4);
-        if(best_N != 0)
-            for (int i=0; i<best_N; ++i)
+
+        // ---------- 5. 使用最优内点重新拟合 ----------
+        Eigen::MatrixXd A_best;
+        if (!best_inliers_index.empty())
+        {
+            const int best_N = best_inliers_index.size();
+            A_best.resize(best_N, 4);
+            for (int i = 0; i < best_N; ++i)
                 A_best.row(i) = A.row(best_inliers_index[i]);
+        }
         else
         {
-            A_best.resize(A.rows(), A.cols());
+            // fallback：全体
             A_best = A;
         }
 
-        // LOG(ERROR) << "A_best = " << A_best << std::endl;
+        // ---------- 6. SVD 精修 ----------
         Eigen::JacobiSVD<Eigen::MatrixXd> svd(A_best, Eigen::ComputeFullV);
         best_normal = svd.matrixV().col(3);
 
-        // LOG(ERROR) << "best_inliers_index.size = " << best_inliers_index.size() << std::endl;
-        LOG(ERROR) << "best_normal = " << best_normal.transpose() << std::endl;
+        // ---------- 7. 可选调试 ----------
+        // LOG(ERROR) << "best_normal = " << best_normal.transpose();
+        // LOG(ERROR) << "inliers = " << max_inlier_count << " / " << N;
+        // LOG(ERROR) << "fit residual = \n" << (A_best * best_normal).transpose();
 
-        LOG(ERROR) << "fit error = " << A_best * best_normal << std::endl;
+        std::chrono::time_point<std::chrono::high_resolution_clock> flow_ransac_end = std::chrono::high_resolution_clock::now();
+        auto dt_ms = std::chrono::duration_cast<
+            std::chrono::duration<double, std::milli>>(
+            flow_ransac_end - flow_ransac_start).count();
+
+        // LOG(ERROR) << "RansacPlaneFit = " << dt_ms << " ms";
+
     }
+
+
 
 
         // SAE光流计算示例
@@ -326,8 +458,8 @@ public:
                     sample_mask.at<uchar>(y / grid_size, x / grid_size) = 1;
                 }
             }
-            LOG(ERROR) << "total.candidate = " << candidates.size() << std::endl;
-            LOG(ERROR) << "sampled_points.size = " << sampled_points.size() << std::endl;
+            // LOG(ERROR) << "total.candidate = " << candidates.size() << std::endl;
+            // LOG(ERROR) << "sampled_points.size = " << sampled_points.size() << std::endl;
             if(sampled_points.size() < 6)
                 return false;
             }*/
@@ -364,8 +496,8 @@ public:
                 }
             }
 
-            LOG(INFO) << "Total candidates: " << candidates.size()
-                    << ", sampled: " << sampled_points.size();
+            // LOG(INFO) << "Total candidates: " << candidates.size()
+            //         << ", sampled: " << sampled_points.size();
 
             if (sampled_points.size() < 6)
                 return false;
@@ -402,8 +534,8 @@ public:
                             // LOG(ERROR) << "sae_decay = " << sae_decay.at<double>(pt.y + dy, pt.x + dx) << std::endl;
                         }
                     }
-                    //  LOG(ERROR) << "pt = " << pt.x << ", " << pt.y << std::endl;
-                    LOG(ERROR) << "A = " << A << std::endl;
+                    //  // LOG(ERROR) << "pt = " << pt.x << ", " << pt.y << std::endl;
+                    // LOG(ERROR) << "A = " << A << std::endl;
 
                     {
                         Eigen::Vector4d normal;
@@ -417,13 +549,13 @@ public:
                             event_flow_velocity flow;
                             flow.x = -c_ / a_;
                             flow.y = -c_ / b_;
-                            LOG(ERROR) << "local flow = " << flow.x << ", " << flow.y;
-                            LOG(ERROR) << "fx = " << K(0,0) << ", fy = " << K(1,1);
+                            // LOG(ERROR) << "local flow = " << flow.x << ", " << flow.y;
+                            // LOG(ERROR) << "fx = " << K(0,0) << ", fy = " << K(1,1);
                             // flow.x /= K(0,0);
                             // flow.y /= K(1,1);
                             double flow_norm = std::sqrt(flow.x * flow.x + flow.y * flow.y);
-                            LOG(ERROR) << "local flow = " << flow.x << ", " << flow.y;
-                            LOG(ERROR) << "flow norm = " << flow_norm;
+                            // LOG(ERROR) << "local flow = " << flow.x << ", " << flow.y;
+                            // LOG(ERROR) << "flow norm = " << flow_norm;
                             if(flow_norm < 500)
                             {
                                 flow_pre_points.push_back(flow);
@@ -445,8 +577,8 @@ public:
                                 // normal_norm *= focal_len_inv;
                                 // // LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
 
-                                LOG(ERROR) << "norm_grad_vec = " << norm_grad_vec.transpose();
-                                LOG(ERROR) << "normal_norm = " << normal_norm;
+                                // LOG(ERROR) << "norm_grad_vec = " << norm_grad_vec.transpose();
+                                // LOG(ERROR) << "normal_norm = " << normal_norm;
 
                                 normal_flows.push_back(norm_grad_vec);
                                 normal_norms.push_back(normal_norm);
@@ -540,102 +672,340 @@ public:
                 }
             }
             */
+
+            // const int mesh_size = 2 * radius + 1;
+            // const int Npath = mesh_size * mesh_size;
+            // Eigen::VectorXd coords = Eigen::VectorXd::LinSpaced(mesh_size, -radius, radius);
+            // flow_pre_points.clear();
+            // best_inliers.clear();
+            // plane_params.clear();
+            // normal_flows.clear();
+            // normal_norms.clear();
+            // // 并行处理每个采样点
+            // #pragma omp parallel
+            // {
+            //     std::vector<event_flow_velocity> local_flows;
+            //     std::vector<cv::Point> local_inliers;
+            //     std::vector<Eigen::Vector4d> local_planes;
+            //     std::vector<Eigen::Vector3d> local_flow_dirs;
+            //     std::vector<double> local_norms;
+
+            //     #pragma omp for schedule(dynamic)
+            //     for (int i = 0; i < (int)sampled_points.size(); ++i) {
+            //         const cv::Point& pt = sampled_points[i];
+
+            //         // 防止越界
+            //         if (pt.x - radius < 0 || pt.y - radius < 0 ||
+            //             pt.x + radius >= sae_decay.cols || pt.y + radius >= sae_decay.rows)
+            //             continue;
+                    
+            //         // 获取 SAE 子区域 ROI
+            //         cv::Rect roi(pt.x - radius, pt.y - radius, mesh_size, mesh_size);
+            //         cv::Mat patch = sae_decay(roi);
+                    
+            //         // 映射到 Eigen 连续内存
+            //         Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> patch_eigen(
+            //             reinterpret_cast<double*>(patch.data), mesh_size, mesh_size);
+            //         // LOG(ERROR) << "B";
+            //         double center_timestamp = patch_eigen(radius, radius);
+                    
+            //         // 构建 A 矩阵
+            //         Eigen::MatrixXd A(Npath, 4);
+            //         int idx = 0;
+            //         for (int dy = 0; dy < mesh_size; ++dy) {
+            //             for (int dx = 0; dx < mesh_size; ++dx) {
+            //                 A(idx, 0) = coords(dx);
+            //                 A(idx, 1) = coords(dy);
+            //                 A(idx, 2) = patch_eigen(dy, dx) - center_timestamp;
+            //                 A(idx, 3) = 1.0;
+            //                 ++idx;
+            //             }
+            //         }
+            //         Eigen::Vector4d normal;
+            //         normal.setZero();
+            //         RansacPlaneFit(A, 0.05, normal, 8);
+            //         double a_ = normal(0), b_ = normal(1), c_ = normal(2);
+            //         if (std::abs(a_) > 1e-6 && std::abs(b_) > 1e-6) {
+            //             event_flow_velocity flow;
+            //             flow.x = -c_ / a_;
+            //             flow.y = -c_ / b_;
+            //             if (flow.x * flow.x + flow.y * flow.y < 250000.0) { // 最大速度约束
+            //                 Eigen::Vector3d norm_grad_vec(normal(0) * K(0,0),
+            //                                             normal(1) * K(1,1),
+            //                                             0.0);
+            //                 double norm_grad = norm_grad_vec.norm();
+            //                 norm_grad_vec /= norm_grad;
+            //                 double normal_norm = -normal(2) / norm_grad;
+
+            //                 // 局部容器收集，避免临界区
+            //                 local_flows.push_back(flow);
+            //                 local_inliers.push_back(pt);
+            //                 local_planes.push_back(normal);
+            //                 local_flow_dirs.push_back(norm_grad_vec);
+            //                 local_norms.push_back(normal_norm);
+            //             }
+            //         }
+                    
+            //     }
+                
+            //     // 合并局部结果到全局容器
+            //     #pragma omp critical
+            //     {
+            //         flow_pre_points.insert(flow_pre_points.end(), local_flows.begin(), local_flows.end());
+            //         best_inliers.insert(best_inliers.end(), local_inliers.begin(), local_inliers.end());
+            //         plane_params.insert(plane_params.end(), local_planes.begin(), local_planes.end());
+            //         normal_flows.insert(normal_flows.end(), local_flow_dirs.begin(), local_flow_dirs.end());
+            //         normal_norms.insert(normal_norms.end(), local_norms.begin(), local_norms.end());
+            //     }
+            // }
+            // 2025-12-15 修改
+
+            // 假设 radius 在编译期或运行期固定较小（<= 6）
             const int mesh_size = 2 * radius + 1;
             const int Npath = mesh_size * mesh_size;
-            Eigen::VectorXd coords = Eigen::VectorXd::LinSpaced(mesh_size, -radius, radius);
+
+            // 清空全局容器（外部）
             flow_pre_points.clear();
             best_inliers.clear();
             plane_params.clear();
             normal_flows.clear();
             normal_norms.clear();
-            // 并行处理每个采样点
+
+            // --------- OpenMP 并行区 ---------
+            // const int max_threads = omp_get_max_threads();
+
+            // // 每个线程一个局部容器，避免 critical
+            // std::vector<std::vector<event_flow_velocity>> flows_tls(max_threads);
+            // std::vector<std::vector<cv::Point>>          inliers_tls(max_threads);
+            // std::vector<std::vector<Eigen::Vector4d>>    planes_tls(max_threads);
+            // std::vector<std::vector<Eigen::Vector3d>>    flow_dirs_tls(max_threads);
+            // std::vector<std::vector<double>>             norms_tls(max_threads);
+
+            // #pragma omp parallel
+            // {
+            //     const int tid = omp_get_thread_num();
+
+            //     auto& local_flows     = flows_tls[tid];
+            //     auto& local_inliers   = inliers_tls[tid];
+            //     auto& local_planes    = planes_tls[tid];
+            //     auto& local_flow_dirs = flow_dirs_tls[tid];
+            //     auto& local_norms     = norms_tls[tid];
+
+            //     // 栈上 A，避免 heap
+            //     Eigen::Matrix<double, Eigen::Dynamic, 4, Eigen::RowMajor> A;
+            //     A.resize(Npath, 4);
+
+            //     #pragma omp for schedule(dynamic)
+            //     for (int i = 0; i < (int)sampled_points.size(); ++i)
+            //     {
+            //         const cv::Point& pt = sampled_points[i];
+
+            //         // ROI 边界检查
+            //         if (pt.x - radius < 0 || pt.y - radius < 0 ||
+            //             pt.x + radius >= sae_decay.cols ||
+            //             pt.y + radius >= sae_decay.rows)
+            //             continue;
+
+            //         // ROI
+            //         cv::Rect roi(pt.x - radius, pt.y - radius, mesh_size, mesh_size);
+            //         const cv::Mat patch = sae_decay(roi);
+
+            //         // 直接指针访问（CV_64F）
+            //         const double* patch_ptr = patch.ptr<double>();
+            //         const int stride = patch.step1();
+
+            //         const double center_timestamp = patch_ptr[radius * stride + radius];
+
+            //         // 构建 A（无 Eigen::VectorXd coords）
+            //         int idx = 0;
+            //         for (int dy = 0; dy < mesh_size; ++dy)
+            //         {
+            //             const int oy = dy - radius;
+            //             for (int dx = 0; dx < mesh_size; ++dx)
+            //             {
+            //                 const int ox = dx - radius;
+            //                 const double dt =
+            //                     patch_ptr[dy * stride + dx] - center_timestamp;
+
+            //                 A(idx, 0) = ox;
+            //                 A(idx, 1) = oy;
+            //                 A(idx, 2) = dt;
+            //                 A(idx, 3) = 1.0;
+            //                 ++idx;
+            //             }
+            //         }
+
+            //         // RANSAC 平面拟合
+            //         Eigen::Vector4d normal;
+            //         normal.setZero();
+            //         RansacPlaneFit(A, 0.05, normal, 8);
+
+            //         const double a = normal(0);
+            //         const double b = normal(1);
+            //         const double c = normal(2);
+
+            //         if (std::abs(a) < 1e-6 || std::abs(b) < 1e-6)
+            //             continue;
+
+            //         event_flow_velocity flow;
+            //         flow.x = -c / a;
+            //         flow.y = -c / b;
+
+            //         // 速度约束
+            //         if (flow.x * flow.x + flow.y * flow.y > 250000.0)
+            //             continue;
+
+            //         // 法向梯度
+            //         Eigen::Vector3d grad(
+            //             normal(0) * K(0, 0),
+            //             normal(1) * K(1, 1),
+            //             0.0);
+
+            //         const double grad_norm = grad.norm();
+            //         if (grad_norm < 1e-8)
+            //             continue;
+
+            //         grad /= grad_norm;
+            //         const double normal_norm = -normal(2) / grad_norm;
+
+            //         // 线程本地收集
+            //         local_flows.push_back(flow);
+            //         local_inliers.push_back(pt);
+            //         local_planes.push_back(normal);
+            //         local_flow_dirs.push_back(grad);
+            //         local_norms.push_back(normal_norm);
+            //     }
+            // }
+            // 2025-12-15 修改
+            // --------- OpenMP 并行区 ---------
+            const int max_threads = omp_get_max_threads();
+
+            // TLS containers
+            std::vector<std::vector<event_flow_velocity>> flows_tls(max_threads);
+            std::vector<std::vector<cv::Point>>          inliers_tls(max_threads);
+            std::vector<std::vector<Eigen::Vector4d>>    planes_tls(max_threads);
+            std::vector<std::vector<Eigen::Vector3d>>    flow_dirs_tls(max_threads);
+            std::vector<std::vector<double>>             norms_tls(max_threads);
+
             #pragma omp parallel
             {
-                std::vector<event_flow_velocity> local_flows;
-                std::vector<cv::Point> local_inliers;
-                std::vector<Eigen::Vector4d> local_planes;
-                std::vector<Eigen::Vector3d> local_flow_dirs;
-                std::vector<double> local_norms;
+                const int tid = omp_get_thread_num();
 
-                #pragma omp for schedule(dynamic)
-                for (int i = 0; i < (int)sampled_points.size(); ++i) {
+                auto& local_flows     = flows_tls[tid];
+                auto& local_inliers   = inliers_tls[tid];
+                auto& local_planes    = planes_tls[tid];
+                auto& local_flow_dirs = flow_dirs_tls[tid];
+                auto& local_norms     = norms_tls[tid];
+
+                // 预分配，避免 realloc
+                const int approx = sampled_points.size() / max_threads + 8;
+                local_flows.reserve(approx);
+                local_inliers.reserve(approx);
+                local_planes.reserve(approx);
+                local_flow_dirs.reserve(approx);
+                local_norms.reserve(approx);
+
+                // 栈上 A（一次 resize）
+                Eigen::Matrix<double, Eigen::Dynamic, 4, Eigen::RowMajor> A(Npath, 4);
+
+                #pragma omp for schedule(guided,4)
+                for (int i = 0; i < (int)sampled_points.size(); ++i)
+                {
                     const cv::Point& pt = sampled_points[i];
 
-                    // 防止越界
                     if (pt.x - radius < 0 || pt.y - radius < 0 ||
-                        pt.x + radius >= sae_decay.cols || pt.y + radius >= sae_decay.rows)
+                        pt.x + radius >= sae_decay.cols ||
+                        pt.y + radius >= sae_decay.rows)
                         continue;
-                    
-                    // 获取 SAE 子区域 ROI
-                    cv::Rect roi(pt.x - radius, pt.y - radius, mesh_size, mesh_size);
-                    cv::Mat patch = sae_decay(roi);
-                    
-                    // 映射到 Eigen 连续内存
-                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> patch_eigen(
-                        reinterpret_cast<double*>(patch.data), mesh_size, mesh_size);
-                    LOG(ERROR) << "B";
-                    double center_timestamp = patch_eigen(radius, radius);
-                    
-                    // 构建 A 矩阵
-                    Eigen::MatrixXd A(Npath, 4);
-                    int idx = 0;
-                    for (int dy = 0; dy < mesh_size; ++dy) {
-                        for (int dx = 0; dx < mesh_size; ++dx) {
-                            A(idx, 0) = coords(dx);
-                            A(idx, 1) = coords(dy);
-                            A(idx, 2) = patch_eigen(dy, dx) - center_timestamp;
-                            A(idx, 3) = 1.0;
-                            ++idx;
-                        }
-                    }
-                    LOG(ERROR) << "D";
-                    Eigen::Vector4d normal;
-                    normal.setZero();
-                    LOG(ERROR) << "A";
-                    RansacPlaneFit(A, 0.05, normal, 8);
-                    LOG(ERROR) << "C";
-                    double a_ = normal(0), b_ = normal(1), c_ = normal(2);
-                    if (std::abs(a_) > 1e-6 && std::abs(b_) > 1e-6) {
-                        event_flow_velocity flow;
-                        flow.x = -c_ / a_;
-                        flow.y = -c_ / b_;
-                        if (flow.x * flow.x + flow.y * flow.y < 250000.0) { // 最大速度约束
-                            Eigen::Vector3d norm_grad_vec(normal(0) * K(0,0),
-                                                        normal(1) * K(1,1),
-                                                        0.0);
-                            double norm_grad = norm_grad_vec.norm();
-                            norm_grad_vec /= norm_grad;
-                            double normal_norm = -normal(2) / norm_grad;
 
-                            // 局部容器收集，避免临界区
-                            local_flows.push_back(flow);
-                            local_inliers.push_back(pt);
-                            local_planes.push_back(normal);
-                            local_flow_dirs.push_back(norm_grad_vec);
-                            local_norms.push_back(normal_norm);
+                    // ROI
+                    const cv::Rect roi(pt.x - radius, pt.y - radius, mesh_size, mesh_size);
+                    const cv::Mat patch = sae_decay(roi);
+
+                    const double* patch_ptr = patch.ptr<double>();
+                    const int stride = patch.step1();
+
+                    const double center_ts = patch_ptr[radius * stride + radius];
+
+                    // -------- 构建 A（优化版）--------
+                    int idx = 0;
+                    for (int dy = 0; dy < mesh_size; ++dy)
+                    {
+                        const int oy = dy - radius;
+                        const double* row = patch_ptr + dy * stride;
+
+                        for (int dx = 0; dx < mesh_size; ++dx, ++idx)
+                        {
+                            A(idx, 0) = dx - radius;
+                            A(idx, 1) = oy;
+                            A(idx, 2) = row[dx] - center_ts;
+                            A(idx, 3) = 1.0;
                         }
                     }
-                    
+
+                    // -------- RANSAC（保留）--------
+                    Eigen::Vector4d normal;
+                    RansacPlaneFit(A, 0.05, normal, 8);
+
+                    const double a = normal(0);
+                    const double b = normal(1);
+                    const double c = normal(2);
+
+                    if (a * a < 1e-12 || b * b < 1e-12)
+                        continue;
+
+                    const double vx = -c / a;
+                    const double vy = -c / b;
+                    if (vx * vx + vy * vy > 250000.0)
+                        continue;
+
+                    Eigen::Vector3d grad(
+                        a * K(0, 0),
+                        b * K(1, 1),
+                        0.0);
+
+                    const double grad_norm = grad.norm();
+                    if (grad_norm < 1e-8)
+                        continue;
+
+                    grad /= grad_norm;
+                    const double normal_norm = -c / grad_norm;
+
+                    // -------- TLS 收集 --------
+                    local_flows.push_back({vx, vy});
+                    local_inliers.push_back(pt);
+                    local_planes.push_back(normal);
+                    local_flow_dirs.push_back(grad);
+                    local_norms.push_back(normal_norm);
                 }
-                
-                // 合并局部结果到全局容器
-                #pragma omp critical
-                {
-                    flow_pre_points.insert(flow_pre_points.end(), local_flows.begin(), local_flows.end());
-                    best_inliers.insert(best_inliers.end(), local_inliers.begin(), local_inliers.end());
-                    plane_params.insert(plane_params.end(), local_planes.begin(), local_planes.end());
-                    normal_flows.insert(normal_flows.end(), local_flow_dirs.begin(), local_flow_dirs.end());
-                    normal_norms.insert(normal_norms.end(), local_norms.begin(), local_norms.end());
-                }
+            }
+            std::chrono::time_point<std::chrono::high_resolution_clock> flow_plane_2 = std::chrono::high_resolution_clock::now();
+            // --------- 串行合并（无锁） ---------
+            for (int t = 0; t < max_threads; ++t)
+            {
+                flow_pre_points.insert(flow_pre_points.end(),
+                    flows_tls[t].begin(), flows_tls[t].end());
+
+                best_inliers.insert(best_inliers.end(),
+                    inliers_tls[t].begin(), inliers_tls[t].end());
+
+                plane_params.insert(plane_params.end(),
+                    planes_tls[t].begin(), planes_tls[t].end());
+
+                normal_flows.insert(normal_flows.end(),
+                    flow_dirs_tls[t].begin(), flow_dirs_tls[t].end());
+
+                normal_norms.insert(normal_norms.end(),
+                    norms_tls[t].begin(), norms_tls[t].end());
             }
             std::chrono::time_point<std::chrono::high_resolution_clock> flow_plane = std::chrono::high_resolution_clock::now();
 
 
-            LOG(ERROR) << "best_inliers.size() = " << best_inliers.size() << std::endl;
+            // LOG(ERROR) << "best_inliers.size() = " << best_inliers.size() << std::endl;
 
             if(best_inliers.size() < 3)
             {
-                LOG(ERROR) << "not enough flow_collect, only: " << best_inliers.size() << std::endl;
+                // LOG(ERROR) << "not enough flow_collect, only: " << best_inliers.size() << std::endl;
                 return false;
             }
 
@@ -648,7 +1018,7 @@ public:
             cv::Mat nonZeroMask = (sae_decay != 0);
             double minVal, maxVal;
             cv::minMaxLoc(sae_decay, &minVal, &maxVal, 0, 0, nonZeroMask);
-            LOG(ERROR) << "minVal = " << minVal << ", maxVal = " << maxVal;
+            // LOG(ERROR) << "minVal = " << minVal << ", maxVal = " << maxVal;
             cv::Mat sae_normalized = cv::Mat::zeros(sae_decay.size(), CV_8UC1);
             if (minVal != maxVal) {
                 double alpha = (255.0 - 128.0) / (maxVal - minVal);
@@ -680,7 +1050,7 @@ public:
                 normal_flow <<  plane(0), plane(1), 0.0;
                 double norm_flow_2 = normal_flow.norm() * normal_flow.norm(); 
                 normal_flow = (- plane(2) * normal_flow / norm_flow_2);
-                LOG(ERROR) << "normal_flow.norm() = " << normal_flow.norm() << std::endl;
+                // LOG(ERROR) << "normal_flow.norm() = " << normal_flow.norm() << std::endl;
                 
                 if(normal_flow.norm() > 60)
                     continue;
@@ -712,7 +1082,7 @@ public:
             for (size_t i = 0; i < best_inliers.size(); ++i) {
                 cv::Point2d normal_end_pt(best_inliers[i].x + 1.0 * std::max(normal_flows[i](0) * 20, 1.0),
                         best_inliers[i].y  + 1.0 * std::max(normal_flows[i](1) * 20, 1.0)); // 放大显示箭头
-                cv::arrowedLine(sae_color, best_inliers[i], normal_end_pt, cv::Scalar(255, 0, 0), 1, cv::LINE_AA, 0, 0.15);
+                cv::arrowedLine(sae_color, best_inliers[i], normal_end_pt, cv::Scalar(255, 255, 0), 1, cv::LINE_AA, 0, 0.25);
             }
 
             // 4. 发布图像
@@ -730,21 +1100,25 @@ public:
             // cv::imwrite("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/flow_" 
             //         + std::to_string(img_index++) + ".png", sae_color);
 
-            {
+            /*{
                 std::chrono::duration<double, std::milli> elapsed;
                 elapsed = flow_visualize - flow_start;
-                LOG(ERROR) << "FLow Total Time: " << std::setprecision(18) << elapsed.count() << std::endl;
+                // LOG(ERROR) << "FLow Total Time: " << std::setprecision(18) << elapsed.count() << std::endl;
                 elapsed = flow_sae - flow_start;
-                LOG(ERROR) << "FLow Sae: " << std::setprecision(18) << elapsed.count() << std::endl;
+                // LOG(ERROR) << "FLow Sae: " << std::setprecision(18) << elapsed.count() << std::endl;
                 elapsed = flow_disnoise - flow_sae;
-                LOG(ERROR) << "FLow Disnoise: " << std::setprecision(18) << elapsed.count() << std::endl;
+                // LOG(ERROR) << "FLow Disnoise: " << std::setprecision(18) << elapsed.count() << std::endl;
                 elapsed = flow_sample - flow_disnoise;
-                LOG(ERROR) << "FLow Sample: " << std::setprecision(18) << elapsed.count() << std::endl;
+                // LOG(ERROR) << "FLow Sample: " << std::setprecision(18) << elapsed.count() << std::endl;
+                elapsed = flow_plane_2 - flow_sample;
+                // LOG(ERROR) << "FLow Plane I: " << std::setprecision(18) << elapsed.count() << std::endl;
+                elapsed = flow_plane - flow_plane_2;
+                // LOG(ERROR) << "FLow Plane II: " << std::setprecision(18) << elapsed.count() << std::endl;
                 elapsed = flow_plane - flow_sample;
-                LOG(ERROR) << "FLow Plane: " << std::setprecision(18) << elapsed.count() << std::endl;
+                // LOG(ERROR) << "FLow Plane Total: " << std::setprecision(18) << elapsed.count() << std::endl;
                 elapsed = flow_visualize - flow_plane;
-                LOG(ERROR) << "FLow Visualize: " << std::setprecision(18) << elapsed.count() << std::endl;
-            }
+                // LOG(ERROR) << "FLow Visualize: " << std::setprecision(18) << elapsed.count() << std::endl;
+            }*/
 
             return true;
         }
@@ -811,8 +1185,8 @@ public:
                     *iter_y = Y;
                     *iter_z = Z;
 
-                    LOG(ERROR) << "pixel = [" << u << ", " << v << "]";
-                    LOG(ERROR) << "coordinate = [" << X << ", " << Y << "]";
+                    // LOG(ERROR) << "pixel = [" << u << ", " << v << "]";
+                    // LOG(ERROR) << "coordinate = [" << X << ", " << Y << "]";
 
                     if (sae_color.channels() == 3) {
                         cv::Vec3b col = sae_color.at<cv::Vec3b>(v, u);
@@ -829,11 +1203,11 @@ public:
                     ++iter_x; ++iter_y; ++iter_z;
                     ++iter_r; ++iter_g; ++iter_b;
                 }
-                LOG(ERROR) << "Project Pixel Sucess!";
+                // LOG(ERROR) << "Project Pixel Sucess!";
 
                 float scale_flow = 50.0f; // 缩放光流向量长度
-                LOG(ERROR) << "best_inliers.size = " << best_inliers.size();
-                LOG(ERROR) << "normal_flows.size = " << normal_flows.size();
+                // LOG(ERROR) << "best_inliers.size = " << best_inliers.size();
+                // LOG(ERROR) << "normal_flows.size = " << normal_flows.size();
                 for (size_t i = 0; i < best_inliers.size(); ++i) {
                     const cv::Point2d& pt = best_inliers[i];
                     int u = static_cast<int>(pt.x);
@@ -1019,7 +1393,7 @@ public:
             const int ransac_iter = 15;
             const int minimum_flow = 3;
             int N = flow_pre_points.size();
-            LOG(ERROR) << "N = " << N  << std::endl;
+            // LOG(ERROR) << "N = " << N  << std::endl;
             if (N < minimum_flow) {
                 std::cerr << "Error: Not enough points for estimation." << std::endl;
                 return false;
@@ -1028,7 +1402,7 @@ public:
             linear_vel << radar_vel.twist.twist.linear.x, radar_vel.twist.twist.linear.y, radar_vel.twist.twist.linear.z;
             if(linear_vel.norm() < 1e-6)
             {
-                LOG(ERROR) << "radar ego velocity is valid!" << std::endl;
+                // LOG(ERROR) << "radar ego velocity is valid!" << std::endl;
                 return false;
             }
 
@@ -1095,9 +1469,9 @@ public:
 
                     // 上面的像素光流需要转到相机系下光流
                     double focal_len_inv = (K_inv(0,0) + K_inv(1,1)) / 2;
-                    LOG(ERROR) << "focal_len_inv = " << focal_len_inv << std::endl;
+                    // LOG(ERROR) << "focal_len_inv = " << focal_len_inv << std::endl;
                     normal_norm *= focal_len_inv;
-                    LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
+                    // LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
                     // 由于内参仅仅是缩放尺寸，因此梯度方向并不改变 norm_grad_vec
                 }*/
 
@@ -1117,11 +1491,11 @@ public:
                     // LOG(ERROR) << "flow = " << flow << std::endl;
                     // LOG(ERROR) << "grad = " << grad << std::endl;
 
-                    LOG(ERROR) << "normal_flow = " << norm_grad_vec.transpose() << std::endl;
-                    LOG(ERROR) << "pixel_skew = " << pixel_skew << std::endl;
-                    LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
+                    // LOG(ERROR) << "normal_flow = " << norm_grad_vec.transpose() << std::endl;
+                    // LOG(ERROR) << "pixel_skew = " << pixel_skew << std::endl;
+                    // LOG(ERROR) << "normal_norm = " << normal_norm << std::endl;
 
-                    LOG(ERROR) << "prefix = " << prefix << std::endl;
+                    // LOG(ERROR) << "prefix = " << prefix << std::endl;
                 }
 
                 // if(normal_norm > 60)
@@ -1138,8 +1512,8 @@ public:
                 // b_all.segment<3>(3*i) = -1.0 * prefix * normal_norm;
             }
 
-            LOG(ERROR) << "A_all = " << A_all << std::endl;
-            LOG(ERROR) << "b_all = " << b_all << std::endl;            
+            // LOG(ERROR) << "A_all = " << A_all << std::endl;
+            // LOG(ERROR) << "b_all = " << b_all << std::endl;            
 
             // RANSAC初始化
             std::random_device rd;
@@ -1263,10 +1637,10 @@ public:
             } // omp parallel
 
             // LOG(ERROR) << "best_error = " << best_error << std::endl;
-            LOG(ERROR) << "best_inliers.size = " << best_inliers_index.size() << std::endl;
+            // LOG(ERROR) << "best_inliers.size = " << best_inliers_index.size() << std::endl;
 
             if (best_inliers_index.empty()) {
-                LOG(ERROR) << "RANSAC failed to find a good angular velocity." << std::endl;
+                // LOG(ERROR) << "RANSAC failed to find a good angular velocity." << std::endl;
                 best_inliers.clear();
                 flow_pre_points.clear();
                 normal_flows.clear();
@@ -1283,10 +1657,10 @@ public:
                 A_inliers.block<3,3>(3*i, 0) = A_all.block<3,3>(3*idx, 0);
                 b_inliers.segment<3>(3*i) = b_all.segment<3>(3*idx);
             }
-            LOG(ERROR) << "A_inliers = " << A_inliers << std::endl;
-            LOG(ERROR) << "b_inliers = " << b_inliers << std::endl;
+            // LOG(ERROR) << "A_inliers = " << A_inliers << std::endl;
+            // LOG(ERROR) << "b_inliers = " << b_inliers << std::endl;
             Eigen::Vector3d refined_angular_vec = A_inliers.colPivHouseholderQr().solve(b_inliers);
-            LOG(ERROR) << "refined_angular_vec = " << refined_angular_vec.transpose() << std::endl;
+            // LOG(ERROR) << "refined_angular_vec = " << refined_angular_vec.transpose() << std::endl;
             */
 
             int M = 3 * best_inliers_index.size();
@@ -1297,10 +1671,10 @@ public:
                 A_inliers.middleRows<3>(3*i) = A_all.middleRows<3>(3*idx);
                 b_inliers.segment<3>(3*i) = b_all.segment<3>(3*idx);
             }
-            LOG(ERROR) << "A_inliers = " << A_inliers << std::endl;
-            LOG(ERROR) << "b_inliers = " << b_inliers << std::endl;
+            // LOG(ERROR) << "A_inliers = " << A_inliers << std::endl;
+            // LOG(ERROR) << "b_inliers = " << b_inliers << std::endl;
             Eigen::Vector3d refined_angular_vec = A_inliers.colPivHouseholderQr().solve(b_inliers);
-            LOG(ERROR) << "refined_angular_vec = " << refined_angular_vec.transpose() << std::endl;
+            // LOG(ERROR) << "refined_angular_vec = " << refined_angular_vec.transpose() << std::endl;
 
 
             // 计算残差和协方差
@@ -1404,7 +1778,7 @@ public:
                 // if (event_stream.front()->header.stamp > process_time) {
                 if (event_stream.front()->events.front().ts > process_time) {
                     // std::cout << "event data is not new than radar" << std::endl;
-                    LOG(ERROR) << "radar data is not new than event" << std::endl;
+                    // LOG(ERROR) << "radar data is not new than event" << std::endl;
                     radar_doppler_velocity.pop_front();
                     radar_inliers.pop_front();
                     return false;
@@ -1428,7 +1802,7 @@ public:
             
             static long int radar_count = 0;
             radar_count ++;
-            LOG(ERROR) << "radar_count = " << radar_count;
+            // LOG(ERROR) << "radar_count = " << radar_count;
 
             radar_doppler_velocity.pop_front(); 
             radar_inliers.pop_front();  
@@ -1460,7 +1834,7 @@ public:
 
                 if(!have_flow)
                 {
-                    LOG(ERROR) << "No flow " << std::endl;
+                    // LOG(ERROR) << "No flow " << std::endl;
                 }
 
                 // 法向光流
@@ -1469,7 +1843,7 @@ public:
                     twist_.twist.twist.angular.x = 0.0f;
                     twist_.twist.twist.angular.y = 0.0f;
                     twist_.twist.twist.angular.z = 0.0f;
-                    LOG(ERROR) << "Angular Estimation Failed!" << std::endl;
+                    // LOG(ERROR) << "Angular Estimation Failed!" << std::endl;
                     // 角速度不可用,尽保留线速度
                     // return false;
 
@@ -1482,7 +1856,7 @@ public:
                 } 
                 else
                 {
-                    LOG(ERROR) << "PublishTimeImages" << std::endl;
+                    // LOG(ERROR) << "PublishTimeImages" << std::endl;
                     time4 = std::chrono::high_resolution_clock::now();
                     
                     // PublishTimeImages(TimeImage1, TimeImage1_time);
@@ -1499,11 +1873,11 @@ public:
                 // LOG_Velocity(twist_, "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/detector.tum");
 
 
-                LOG(ERROR) << "Final Debug for flow: " << best_inliers.size() << std::endl;
-                LOG(ERROR) << "Debug Flow: " << flow_pre_points.front().x  << ", " << flow_pre_points.front().y << std::endl;
+                // LOG(ERROR) << "Final Debug for flow: " << best_inliers.size() << std::endl;
+                // LOG(ERROR) << "Debug Flow: " << flow_pre_points.front().x  << ", " << flow_pre_points.front().y << std::endl;
                 for(auto& f : flow_pre_points)
                 {
-                    LOG(ERROR) << "f = " << f.x << ", " << f.y;
+                    // LOG(ERROR) << "f = " << f.x << ", " << f.y;
                 }
                 
                 twist_result2_.push_back(TwistData2(twist_, cur_inliers, best_inliers, flow_pre_points, normal_flows, normal_norms));
@@ -1512,17 +1886,17 @@ public:
                 {
                     std::chrono::duration<double, std::milli> elapsed;
                     elapsed = end_time - start_time;
-                    LOG(ERROR) << "Detector Total Time: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "Detector Total Time: " << std::setprecision(18) << elapsed.count() << std::endl;
                     elapsed = time1 - start_time;
-                    LOG(ERROR) << "EventArray2EventVec: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "EventArray2EventVec: " << std::setprecision(18) << elapsed.count() << std::endl;
                     elapsed = time2 - time1;
-                    LOG(ERROR) << "AccumulateTimeImage: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "AccumulateTimeImage: " << std::setprecision(18) << elapsed.count() << std::endl;
                     elapsed = time3 - time2;
-                    LOG(ERROR) << "CalculateOpFlowPrepointSingleFit: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "CalculateOpFlowPrepointSingleFit: " << std::setprecision(18) << elapsed.count() << std::endl;
                     elapsed = time4 - time3;
-                    LOG(ERROR) << "LSQAugularVelocityEsti: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "LSQAugularVelocityEsti: " << std::setprecision(18) << elapsed.count() << std::endl;
                     elapsed = time5 - time4;
-                    LOG(ERROR) << "PublishTimeImages: " << std::setprecision(18) << elapsed.count() << std::endl;
+                    // LOG(ERROR) << "PublishTimeImages: " << std::setprecision(18) << elapsed.count() << std::endl;
                 }
 
             }

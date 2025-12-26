@@ -206,8 +206,10 @@ use_order_opti: false  # use under Ceres Version 2.x
 
 output_file: "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/twist_estimator.csv" 
 output_dt: 0.1
-visualize_marker_scale: 3
-visualize_doppler_scale: 3
+visualize_marker_scale: 8
+visualize_doppler_scale: 25
+visualize_traj_total_time: 3.0
+visualize_traj_line_width: 5.0
 cam_topic: "/dvs/image_raw"
 
 local_dt: 3.0
