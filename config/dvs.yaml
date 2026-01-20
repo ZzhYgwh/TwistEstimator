@@ -27,7 +27,7 @@ ignore_polarity: false
 use_gauss: false
 ratio_inliers: 0.4
 
-radar_config: "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/radar_param_mocap.yaml"
+radar_config: "radar_param_mocap.yaml"
 
 radar:
   topic: "/ti_mmwave/radar_scan_pcl_0"

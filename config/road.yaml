@@ -37,7 +37,7 @@ use_gauss: false
 ratio_inliers: 0.15 #0.35 # for mesh size = 4
 grid_size: 25
 
-radar_config: "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_road.yaml"
+radar_config: "radar_param_road.yaml"
 
 radar:
   topic: "/radar/data"
@@ -204,7 +204,7 @@ use_order_opti: false  # use under Ceres Version 2.x
 # omega_weight: 0.06 # 1
 # omega_w_weight: 12 # 15
 
-output_file: "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/twist_estimator.csv" 
+output_file: "twist_estimator.csv" 
 output_dt: 0.1
 visualize_marker_scale: 8
 visualize_doppler_scale: 25

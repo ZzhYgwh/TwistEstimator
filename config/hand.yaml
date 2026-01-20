@@ -37,7 +37,7 @@ use_gauss: false
 ratio_inliers: 0.15 #0.35 # for mesh size = 4
 grid_size: 10
 
-radar_config: "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_hand.yaml"
+radar_config: "radar_param_hand.yaml"
 
 radar:
   topic: "/radar/data"

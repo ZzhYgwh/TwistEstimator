@@ -21,6 +21,7 @@
 #include <pcl/conversions.h>  // For toPCL
 
 #include <tf/transform_broadcaster.h>
+#include <boost/filesystem.hpp>
 
 // Global
 std::mutex detector_data_mutex;
@@ -522,6 +523,7 @@ void EventCallback(dvs_msgs::EventArray::Ptr event_msgs_ptr)
         std::lock_guard<std::mutex> lock(callback_mutex);
         // LOG(ERROR) << "Catch Event Data" << std::endl;
         event_buffer.push_back(event_msgs_ptr);
+        LOG(ERROR) << "ADD Event";
     }
 
 }
@@ -606,7 +608,8 @@ bool ParseYaml(const std::string& filename, EventParams& event, RadarParams& rad
     try
     {
         YAML::Node config = YAML::LoadFile(filename);
-        std::cout << "A" << std::endl;
+        LOG(ERROR) << "ParseYaml config " << filename;
+
         // Parse event parameters
         event.topic = config["event"]["topic"].as<std::string>();
         event.freq = config["event"]["freq"].as<int>();
@@ -635,7 +638,7 @@ bool ParseYaml(const std::string& filename, EventParams& event, RadarParams& rad
         LOG(ERROR) << "mesh size = " << event.mesh_size << std::endl;
         event.timeshift_cam_imu = config["event"]["timeshift_cam_imu"].as<double>();
 
-        LOG(INFO) << "deltaT = " << event.deltaT << ", t1 = " << event.t1 << std::endl;
+        LOG(ERROR) << "deltaT = " << event.deltaT << ", t1 = " << event.t1 << std::endl;
 
         // Parse radar parameters
         radar.topic = config["radar"]["topic"].as<std::string>();
@@ -671,8 +674,9 @@ bool ParseYaml(const std::string& filename, EventParams& event, RadarParams& rad
 
         grid_size = config["grid_size"].as<double>();
 
-        LOG(ERROR) << "radar modify radar_config: " << config["radar_config"].as<std::string>() << std::endl;
-        estimator.LOAD(config["radar_config"].as<std::string>());
+        std::string config_path = filename.substr(0, filename.find_last_of('/'));
+        LOG(ERROR) << "radar modify radar_config: " << config_path + "/" + config["radar_config"].as<std::string>() << std::endl;
+        estimator.LOAD(config_path + "/" + config["radar_config"].as<std::string>());
 
         cam_topic = config["cam_topic"].as<std::string>();
 
@@ -826,7 +830,10 @@ void RUN()
     
             // 事件数据
             if(event_msgs_ptr_copy != nullptr)
+            {
                 event_detector_->event_stream.push_back(event_msgs_ptr_copy); // HAO TODO: 修改 event_msgs_copy -> event_msgs_ptr_copy
+                LOG(ERROR) << "Push Event";
+            }
             auto run_catch = std::chrono::high_resolution_clock::now();
 
             // 多普勒估计
@@ -870,10 +877,14 @@ void RUN()
                     estimate_buffer.push_back(twist2);
                 }
             }
+            else
+            {
+                LOG(ERROR) << "event_detector_->Detector Failed: "; 
+            }
             auto run_end = std::chrono::high_resolution_clock::now();
 
             // Debug: for run time
-            {
+            /*{
                 std::chrono::duration<double, std::milli> duration_ms = run_end - run_start;
                 LOG(ERROR) << "run total: " << duration_ms.count() << " ms" << std::endl;
                 duration_ms = run_catch - run_start;
@@ -883,7 +894,7 @@ void RUN()
                 duration_ms = run_end - run_detector;
                 LOG(ERROR) << "run detector: " << duration_ms.count() << " ms" << std::endl;
                 // run_catch run_doppler run_detector
-            }
+            }*/
         }      
     }
 }
@@ -944,7 +955,7 @@ int main(int argc,char ** argv)
     FLAGS_logbufsecs = 0; // 实时写入
     // 指定日志文件的保存路径
     // FLAGS_log_dir = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/../glog_log";
-    FLAGS_log_dir = "/home/hao/Desktop/twist_ws/src/log";
+    // FLAGS_log_dir = "/home/hao/Desktop/twist_ws/src/log";
     // FLAGS_minloglevel = google::;
     // FLAGS_logtostderr = true;
 
@@ -962,11 +973,26 @@ int main(int argc,char ** argv)
     // const std::string filename = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/dvs.yaml";
     // const std::string filename = "/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/demo_228.yaml";
     // const std::string filename = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/dji2.yaml";
+    std::string node_name = ros::this_node::getName();
+    std::string filename;
+    nh.param<std::string>(node_name + "/config_file", filename, "road.yaml");
+    std::string config_path = filename.substr(0, filename.find_last_of('/'));
+    config_path += "/../../log";
+    boost::filesystem::create_directories(config_path);
+    FLAGS_log_dir = config_path;
+    LOG(ERROR) << "FLAGS_log_dir: " << config_path;
+    LOG(ERROR) << "node_name = " << node_name;
+    LOG(ERROR) << "param node name = " << node_name + "/config_file";
+    // "/home/hao/Desktop/twist_ws/src/log";
 
     // 2025 - 10 - 16 修改
     // const std::string filename = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/dji10.yaml";
     // const std::string filename = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/lab.yaml";
-    const std::string filename = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/road.yaml";
+    // const std::string filename = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/road.yaml";
+    
+    // std::string filename;
+    // nh.param<std::string>(node_name + "/config_file", filename, "road.yaml");
+    
     bool show_events = false;
     double smooth = 0.1;
 
@@ -976,8 +1002,9 @@ int main(int argc,char ** argv)
     bool use_gauss = false;
     double ratio_inliers = 0.1;
     double grid_size = 15;
+    LOG(ERROR) << "filename = " << filename;
     ParseYaml(filename, event, radar, radar_event, show_events, smooth, filter_num, median_radius, ignore_polarity, use_gauss, ratio_inliers, grid_size, cam_topic, imu_topic);
-    std::cout << "smooth = " << smooth << std::endl;
+    LOG(ERROR) << "smooth = " << smooth << std::endl;
 
     LOG(ERROR) << "radar.topic = " << radar.topic << std::endl;
     ros::Subscriber radar_sub_ = nh.subscribe<sensor_msgs::PointCloud2::Ptr>(radar.topic, 100000, RadarCallback);
@@ -1002,31 +1029,8 @@ int main(int argc,char ** argv)
 
     br_ptr_ = std::make_shared<tf::TransformBroadcaster>();
 
-    // event_detector_ = new EventFlowDetector(nh, event, radar_event, show_events, smooth, filter_num, median_radius, ignore_polarity, use_gauss, ratio_inliers);
-    // event_detector_ = new EventFlowDetector3(nh, event, radar_event, show_events, smooth, filter_num, ignore_polarity, ratio_inliers);
     event_detector_ = new SAEFlowDetector(nh, event, radar_event, show_events, smooth, filter_num, ignore_polarity, ratio_inliers, grid_size);
     estimator_ = new TwistEstimator(nh);
-    
-    // ros::Rate rate(20);
-
-    // for callback
-    // ros::AsyncSpinner spinner(2); // 使用1个线程
-    // spinner.start();
-
-    // for detect main
-    // add this to another thread
-    // while(ros::ok())
-    // {
-    //     // ros::spinOnce();
-    //     if(event_detector_->Detector())
-    //     {
-    //         twist = event_detector_->GetTwist();
-    //         // LOG(ERROR) << std::setprecision(18) << "twist time diff = " << (twist.header.stamp - last_twist.header.stamp).toSec() << std::endl;
-    //         last_twist = twist;
-    //         pub_twist_.publish(twist);
-    //     }
-    //     // rate.sleep();
-    // }
 
     std::thread detect_thread(RUN);
     detect_thread.detach();

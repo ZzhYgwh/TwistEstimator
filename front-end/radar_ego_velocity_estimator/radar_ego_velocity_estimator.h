@@ -170,14 +170,10 @@ public:
    * @brief RadarEgoVelocityEstimator constructor
    */
   RadarEgoVelocityEstimator() {
-    //HAO TODO:
-    // config_.LOAD("/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/radar_param_dji.yaml");
-    // config_.LOAD("/home/hao/Desktop/radar-event-new/src/TwistEstimator/config/radar_param_mocap.yaml");
-    // config_.LOAD(file);
-    // setRansacIter();
+
     }
 
-  void LOAD(std::string yaml_file = "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_dji.yaml")
+  void LOAD(std::string yaml_file)
   {
     config_.LOAD(yaml_file);
     setRansacIter();

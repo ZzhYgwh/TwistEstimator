@@ -432,6 +432,7 @@ public:
         const int max_iterations = 50;
         double min_cov_points = std::numeric_limits<double>::max();
 
+        LOG(ERROR) << "CalculateOpFlowPrepointRANSAC "
 
         // 按位与操作
         cv::Mat result;

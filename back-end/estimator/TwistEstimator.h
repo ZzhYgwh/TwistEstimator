@@ -211,9 +211,6 @@ void Init()
     t_add = update_every_k_knot_ * trajectory_->getDt();
 
   LOG(INFO) << "Update traj every " << t_add << " second\n"
-              << std::endl;
-
-  LOG(INFO) << "Update traj every " << t_add << " second\n"
              << " trajectory_->getDt() = " << trajectory_->getDt() << " second\n"
              << std::endl;
 
@@ -1017,6 +1014,8 @@ void ParseYamlFile(std::string& config_path)
 {
   YAML::Node node = YAML::LoadFile(config_path);
 
+  std::string config_path_without_name = config_path.substr(0, config_path.find_last_of('/'));
+
   double knot_distance = node["knot_distance"].as<double>();
   std::cout << "knot_distance = " << knot_distance << std::endl;
 
@@ -1078,7 +1077,8 @@ void ParseYamlFile(std::string& config_path)
 
   update_every_k_knot_ = node["update_every_k_knot"].as<int>();
 
-  output_path = node["output_file"].as<std::string>();
+  output_path = config_path_without_name + "/../output/" + node["output_file"].as<std::string>();
+  LOG(ERROR) << "output_path = " << output_path;
   output_dt = node["output_dt"].as<double>();
 
   local_dt = node["local_dt"].as<double>();

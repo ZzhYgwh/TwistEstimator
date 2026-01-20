@@ -27,6 +27,8 @@ public:
                 0, e_params.fy, e_params.cy,
                 0,0,1;
 
+            LOG(ERROR) << "K = " << K;
+
             K_cv = cv::Mat(3, 3, CV_64F, K.transpose().data()).clone(); // 使用 .clone() 以确保数据独立
             K_cv = K_cv.t();
 
@@ -50,10 +52,6 @@ public:
             cam_info.width = sensor_width;
             // cam_info.K = K_cv;
             std::copy(K_cv.ptr<double>(), K_cv.ptr<double>() + 9, cam_info.K.begin());
-
-            for (size_t i = 0; i < 9; ++i) {
-                // LOG(ERROR) << cam_info.K[i] << " ";
-            }
 
             // 直接赋值
             cam_info.distortion_model = "plumb_bob";
@@ -86,7 +84,6 @@ public:
 
             // memcpy(cam_info.K.data(), K_cv.ptr<double>(), 9 * sizeof(double));
             camera_model.fromCameraInfo(cam_info);
-
 
             cv_image_.encoding = "bgr8"; // 假设处理的是彩色图像
             cv_image_.header.frame_id = "camera_frame";
@@ -1799,7 +1796,7 @@ public:
 
                 twist_ = radar_doppler_velocity.front();    
             }
-            
+            LOG(ERROR) << "have data";
             static long int radar_count = 0;
             radar_count ++;
             // LOG(ERROR) << "radar_count = " << radar_count;
@@ -1824,18 +1821,16 @@ public:
                     // LOG(ERROR) << "Not enough event data!" << std::endl;
                     // return false;
                 // }
-                std::chrono::time_point<std::chrono::high_resolution_clock> time3 = std::chrono::high_resolution_clock::now();
-                
-                
+                std::chrono::time_point<std::chrono::high_resolution_clock> time3 = std::chrono::high_resolution_clock::now();   
                 
                 std::chrono::time_point<std::chrono::high_resolution_clock> time4;    
                 std::chrono::time_point<std::chrono::high_resolution_clock> time5; 
                 // if(!(have_flow && LSQAugularVelocityEsti(twist_)))
-
-                if(!have_flow)
+                if(!(have_flow))
                 {
-                    // LOG(ERROR) << "No flow " << std::endl;
+                    LOG(ERROR) << "No Flow" << std::endl;
                 }
+
 
                 // 法向光流
                 if(!(have_flow && NormalAngularVelocityEsti(twist_)))
@@ -1843,7 +1838,7 @@ public:
                     twist_.twist.twist.angular.x = 0.0f;
                     twist_.twist.twist.angular.y = 0.0f;
                     twist_.twist.twist.angular.z = 0.0f;
-                    // LOG(ERROR) << "Angular Estimation Failed!" << std::endl;
+                    LOG(ERROR) << "Angular Estimation Failed!" << std::endl;
                     // 角速度不可用,尽保留线速度
                     // return false;
 

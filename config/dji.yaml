@@ -19,7 +19,7 @@ event:
   k3: -0.08930555
   t1_count: 4000 # 10000 # 12500 # 15000 #10000 # 2000
   t2_count: 2000 # 5000 # 3000
-  sae_time: 0.02 #0.1 #0.5
+  sae_time: 0.08 #0.2 #0.1 #0.5
 # 参数
 # 0.25 3 * 3
 # 0.5  3 * 3
@@ -37,7 +37,7 @@ use_gauss: false
 ratio_inliers: 0.15 #0.35 # for mesh size = 4
 grid_size: 25
 
-radar_config: "/home/hao/Desktop/twist_ws/src/TwistEstimator/config/radar_param_dji.yaml"
+radar_config: "radar_param_road.yaml"
 
 radar:
   topic: "/radar/data"
@@ -56,13 +56,14 @@ radar_event:
     - [1.0,  0.0,  0.0,  -0.16198989]
     - [0.0,  0.0,  0.0,  1.0]
 
+
 event_extrincs:
   topic: "/dvs/events"
   Extrinsics:
     time_offset: 0.0
-    Trans: [0.04077303, -0.02330925, -0.16198989]
-    Rot: [0.0286651, -0.9992392, -0.02644507,
-          -0.04739285, 0.0277848, -0.99848982,
+    Trans: [0.0275, -0.1133587, -0.02875]
+    Rot: [0.0286651, 0.9992392, -0.02644507,
+          -0.04739285, 0.0277848, 0.99848982,
           0.99846494, -0.0273685, 0.04815325]
 
 # [0.0286651,  -0.04739285,  0.99846494,
@@ -203,12 +204,12 @@ use_order_opti: false  # use under Ceres Version 2.x
 # omega_weight: 0.06 # 1
 # omega_w_weight: 12 # 15
 
-output_file: "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/twist_estimator.csv" 
+output_file: "twist_estimator.csv" 
 output_dt: 0.1
-visualize_marker_scale: 0.25
-visualize_doppler_scale: 0.001
-visualize_traj_total_time: 1.0
-visualize_traj_line_width: 5
+visualize_marker_scale: 8
+visualize_doppler_scale: 25
+visualize_traj_total_time: 3.0
+visualize_traj_line_width: 5.0
 cam_topic: "/dvs/image_raw"
 
 local_dt: 3.0

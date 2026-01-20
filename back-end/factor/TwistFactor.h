@@ -4209,8 +4209,8 @@ class EventAgularFactor4 : public ceres::CostFunction, SplitSpineView{
         /*std::fstream angular_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/angular_res.txt",
                                   std::ios::out | std::ios::app);*/
         // angular_file << Output_M(residual) << std::endl;
-        angular_file << residual.norm() << std::endl;
-        angular_file.close();
+        // angular_file << residual.norm() << std::endl;
+        // angular_file.close();
 
         /*if(global_fej_state_)
         {
@@ -5068,8 +5068,8 @@ class ImuFactor : public ceres::CostFunction, SplitSpineView{
       /*std::fstream imu_file("/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_res.txt",
                                 std::ios::out | std::ios::app);*/
       // angular_file << Output_M(residual) << std::endl;
-      imu_file << residual.norm() << std::endl;
-      imu_file.close();
+      // imu_file << residual.norm() << std::endl;
+      // imu_file.close();
 
 
       std::chrono::time_point<std::chrono::high_resolution_clock> time3;
