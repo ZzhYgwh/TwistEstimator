@@ -2,10 +2,18 @@
 import rospy
 from geometry_msgs.msg import TwistWithCovarianceStamped
 
+import os
+
 class RadarTwistLogger:
     def __init__(self):
         # 输出文件路径
-        self.output_path = "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/detector.twist"
+        # self.output_path = "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/detector.twist"
+        self.output_path = os.path.join(
+            os.path.dirname(__file__),
+            "../../output/detector.twist"
+        )
+        self.output_path = os.path.abspath(self.output_path)
+
         self.file = open(self.output_path, "w")
         # self.file.write("# timestamp vx vy vz wx wy wz\n")
 

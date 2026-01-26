@@ -7,13 +7,20 @@ import os
 class RTKVelSaver:
     def __init__(self):
         # ===== resolve relative path: ../../output/ =====
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        default_output_dir = os.path.abspath(
-            os.path.join(script_dir, "../../output")
-        )
-        default_output_path = os.path.join(default_output_dir, "gt.twist")
+        # script_dir = os.path.dirname(os.path.abspath(__file__))
+        # default_output_dir = os.path.abspath(
+        #     os.path.join(script_dir, "../../output")
+        # )
+        # default_output_path = os.path.join(default_output_dir, "gt.twist")
 
-        self.output_path = rospy.get_param("~output", default_output_path)
+        # self.output_path = rospy.get_param("~output", default_output_path)
+
+        self.output_path = os.path.join(
+            os.path.dirname(__file__),
+            "../../output/gt.twist"
+        )
+        self.output_path = os.path.abspath(self.output_path)
+        
         self.use_header_stamp = rospy.get_param("~use_header_stamp", True)
 
         # create directory if not exists

@@ -5,8 +5,12 @@ from geometry_msgs.msg import TwistWithCovarianceStamped
 import os
 
 
-OUTPUT_PATH = "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/estimate.twist"
-
+# OUTPUT_PATH = "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/estimate.twist"
+OUTPUT_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "../../output/gt.twist"
+)
+OUTPUT_PATH = os.path.abspath(OUTPUT_PATH)
 
 class RadarTwistSaver:
     def __init__(self):

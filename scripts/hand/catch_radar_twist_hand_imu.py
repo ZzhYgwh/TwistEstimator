@@ -9,11 +9,19 @@ import numpy as np
 from sensor_msgs.msg import Imu
 import tf.transformations as tft  # ROS 自带的 quaternion -> rotation matrix
 
+import os
+
 class ImuToTwistLogger:
     def __init__(self):
         # 参数
         topic = rospy.get_param("~topic", "/imu/data")
-        out_file = rospy.get_param("~outfile", "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_twist.tum")
+        # out_file = rospy.get_param("~outfile", "/home/hao/Desktop/twist_ws/src/TwistEstimator/output/imu_twist.tum")
+        self.output_path = os.path.join(
+            os.path.dirname(__file__),
+            "../../output/estimate.twist"
+        )
+        self.output_path = os.path.abspath(self.output_path)
+
         self.max_dt = rospy.get_param("~max_dt", 0.1)      # 跳变保护
         self.clip_vel = rospy.get_param("~clip_vel", 50.0) # 速度限幅 (m/s)
         self.gravity = rospy.get_param("~gravity", 9.80665)
@@ -24,12 +32,12 @@ class ImuToTwistLogger:
         self.vel = np.zeros(3)         # 当前估计线速度（世界系）
 
         # 文件
-        self.f = open(out_file, "w")
+        self.f = open(self.output_path, "w")
         rospy.on_shutdown(self._on_shutdown)
 
         # 订阅
         rospy.Subscriber(topic, Imu, self.imu_cb, queue_size=200)
-        rospy.loginfo("✅ imu_to_twist logger started. topic=%s outfile=%s", topic, out_file)
+        rospy.loginfo("✅ imu_to_twist logger started. topic=%s outfile=%s", topic, self.output_path)
 
     def imu_cb(self, msg: Imu):
         t = msg.header.stamp.to_sec()

@@ -7,6 +7,15 @@ import numpy as np
 import tf.transformations
 from collections import deque
 
+
+import os
+# 将结果保存为 TUM 格式
+output_path = os.path.join(
+    os.path.dirname(__file__),
+    "../../output/estimate.twist"
+)
+output_path = os.path.abspath(output_path)
+
 def quaternion_to_rotation_matrix(quaternion):
     """将四元数转换为旋转矩阵。"""
     return tf.transformations.quaternion_matrix([quaternion.x, quaternion.y, quaternion.z, quaternion.w])[:3, :3]
@@ -152,7 +161,8 @@ def radar_twist_callback(pose_data_store):
                 rotated_angular_velocity = angular_velocity
 
                 # 将结果保存为 TUM 格式
-                with open('/home/hao/Desktop/twist_ws/src/TwistEstimator/output/estimate.tum', 'a') as f:
+                
+                with open(output_path, 'a') as f:
                     f.write(f"{twist_timestamp} {rotated_linear_velocity.x} {rotated_linear_velocity.y} {rotated_linear_velocity.z} "
                            f"{rotated_angular_velocity.x} {rotated_angular_velocity.y} {rotated_angular_velocity.z}\n")
                             

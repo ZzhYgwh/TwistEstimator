@@ -7,6 +7,7 @@ from collections import deque
 import threading
 import time
 
+
 # 全局变量存储数据队列
 pose_buffer = deque()  # 存储pose数据
 twist_buffer = deque()  # 存储twist数据
@@ -14,6 +15,14 @@ attitude_queue = deque(maxlen=10)  # 存储四元数数据队列，最多存储1
 position_queue = deque(maxlen=10)  # 存储位置数据队列，最多存储10个数据
 velocity_queue = deque(maxlen=10)  # 存储速度数据队列，最多存储10个数据
 imu_queue = deque(maxlen=10)  # 存储IMU数据队列，最多存储10个数据
+
+import os
+# 将结果保存为 TUM 格式
+output_path = os.path.join(
+    os.path.dirname(__file__),
+    "../../output/gt.twist"
+)
+output_path = os.path.abspath(output_path)
 
 # 发布器
 pose_pub = rospy.Publisher('/dji/pose_stamped', PoseStamped, queue_size=1000)
@@ -105,8 +114,8 @@ def sync_thread():
 
             twist_pub.publish(twist_with_covariance_msg)  # 发布TwistWithCovarianceStamped消息
 
-            # 将结果保存为 TUM 格式
-            with open('/home/hao/Desktop/twist_ws/src/TwistEstimator/output/twist.tum', 'a') as f:
+
+            with open(output_path, 'a') as f:
                 f.write(f"{current_time} {twist_with_covariance_msg.twist.twist.linear.x} {twist_with_covariance_msg.twist.twist.linear.y} {twist_with_covariance_msg.twist.twist.linear.z} "
                         f"{twist_with_covariance_msg.twist.twist.angular.x} {twist_with_covariance_msg.twist.twist.angular.y} {twist_with_covariance_msg.twist.twist.angular.z}\n")
 
